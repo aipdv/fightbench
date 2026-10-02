@@ -35,6 +35,17 @@ assert s["me"]["health_pct"] == 50 and s["health_lead_pct"] == -50, s
 assert s["distance"] == "mid" and s["matchup"].startswith("You are LiuKang"), s
 assert s["attacks_in_reach"] == ["low_kick", "sweep"], s  # 90 px: only the long low attacks reach
 assert build_state([frame(250, 0)] * 15, "x")["attacks_in_reach"] == []
-from mk2_clef import matchup
-assert matchup("VeryEasy.LiuKang-02").startswith("You are LiuKang"), matchup("VeryEasy.LiuKang-02")
+from mk2_clef import VARIANTS, matchup, questions
+assert matchup("VeryEasy.LiuKang-08") == "You are LiuKang (player 1). The CPU is Scorpion.", matchup("VeryEasy.LiuKang-08")
+
+# Tactics variant: specials are forward, forward + button; hit signals come from the 0.75 s history.
+fb = plan_for("fireball_high", "RIGHT", "LEFT")
+assert fb[:3] == [{"RIGHT"}] * 3 and fb[3:6] == [set()] * 3 and fb[6] == {"RIGHT", "A"}, fb
+assert plan_for("flying_kick", "LEFT", "RIGHT")[6] == {"LEFT", "C"}
+assert plan_for("fireball_low", "RIGHT", "LEFT")[11] == {"A"}
+hit = [frame(190, 0)] * 30 + [dict(frame(190, 0), health=50)] * 15
+t = build_state(hit, "VeryEasy.LiuKang-02", "tactics")
+assert t["i_got_hit_recently"] and not t["i_hit_enemy_recently"], t
+assert "fireball_high" in t["attacks_in_reach"] and "i_got_hit_recently" not in build_state(hit, "x"), t
+assert set(VARIANTS["baseline"]["actions"]) < set(questions("tactics")["action"]["criteria"])
 print("ok")

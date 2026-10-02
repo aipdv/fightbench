@@ -39,6 +39,24 @@ uv run mk2_clef.py --calibrate  # saves calibration/moves.png, one frame per mov
 | `--interval` | `0.12` | seconds between requests |
 | `--max-inflight` | `3` | requests in flight at once |
 | `--frame` | off | also send the game frame (about 75 more tokens per request) |
+| `--variant` | `baseline` | `tactics` or `random` (see A/B test) |
+| `--ab N` | off | headless A/B test, see below |
+
+## A/B test
+
+```sh
+uv run mk2_clef.py --ab 1
+```
+
+Plays each of the 14 VeryEasy Liu Kang fights (Rayden to Shao Kahn) once per variant, back to back, with the order flipped every fight. Writes one JSON line per round to `ab/results-*.jsonl` and prints a summary (wins, damage dealt and taken, neurons).
+
+| Variant | What Clef gets |
+|---|---|
+| `baseline` | 13 moves, distance, reach, health, enemy movement |
+| `tactics` | baseline + duck, high and low fireball, flying kick; "got hit / hit enemy in the last 0.75 s"; rules: no long jump-ins, fireball or duck at range, block after a hit. A code guard drops `jump_in` when nothing reaches. |
+| `random` | control: uniform random moves at Clef's pace (0.4 s delay), no API calls |
+
+One run costs about 8,000 neurons (28 Clef rounds), so it needs a fresh free day or the Workers Paid plan. Rounds with Clef errors (for example, quota used up) are flagged in the summary.
 
 ## Verified facts (2026-10-02, `(W)` ROM)
 
@@ -47,12 +65,14 @@ uv run mk2_clef.py --calibrate  # saves calibration/moves.png, one frame per mov
 - **Reach** against an idle Jax: punches and uppercut 70 px, roundhouse 75, high kick 79, low kick 90, sweep 94. Bodies stop at about 45 px.
 - **Surprise:** at point-blank range, toward + A is a throw. For Liu Kang, walking in and then pressing toward + A fires his fireball.
 - **VeryHard save states start mid-fight.** Level1 and VeryEasy states start with the intro. Clef decides from frame 0.
+- **Liu Kang specials** (forward, forward + button): high fireball 17 damage, low fireball 17, flying kick 20, from 100 and 148 px.
 
 ## Results so far
 
 - 3 to 5 decisions per second, median latency about 400 ms from India, 0 errors.
 - **Clef-flash lost every round** (0 of 13 in two runs). It lands hits, but the CPU combos faster than a 400 ms loop can react.
-- Next levers: a code reflex that blocks when the enemy attacks (needs an "enemy attacking" memory address), and character special moves.
+- Special moves are now in the `tactics` variant. A/B results go in `ab/`.
+- Next lever after the A/B test: a code reflex that blocks when the enemy attacks (needs an "enemy attacking" memory address).
 
 ## Cost
 

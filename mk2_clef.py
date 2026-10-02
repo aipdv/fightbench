@@ -56,14 +56,38 @@ ACTIONS = {
 # ponytail: one character pair. Reach differs a little per fighter.
 REACH = {"low_punch": 70, "high_punch": 70, "uppercut": 70, "roundhouse": 75, "high_kick": 79, "low_kick": 90, "sweep": 94}
 
-QUESTIONS = {
-    "action": {
-        "type": "choice",
+VARIANTS = {
+    "baseline": {
+        "actions": ACTIONS,
+        "reach": REACH,
         "instructions": "You are player 1 in Mortal Kombat II. Pick the next move that helps you win the round. "
         "Attack only with a move in attacks_in_reach. If none reach, approach, jump in, or block.",
-        "criteria": ACTIONS,
-    }
+    },
+    # A/B candidate from a review of the demo video (2026-10-02). Specials are Liu Kang only.
+    "tactics": {
+        "actions": {
+            **ACTIONS,
+            "high_punch": "High punch. At point-blank range it becomes a throw, which beats blocking.",
+            "uppercut": "Crouching uppercut. Best against an enemy jumping at you. Risky if blocked up close.",
+            "duck": "Crouch without blocking. High projectiles fly over you.",
+            "fireball_high": "Liu Kang high fireball. Hits from any distance.",
+            "fireball_low": "Liu Kang low fireball. Hits from any distance.",
+            "flying_kick": "Liu Kang flying kick. Crosses mid and long range fast.",
+        },
+        # Fireballs and flying kick hit an idle Jax at 100 and 148 px (2P state, 2026-10-02).
+        "reach": {**REACH, "flying_kick": 150, "fireball_high": 999, "fireball_low": 999},
+        "instructions": "You are player 1 in Mortal Kombat II. Pick the next move that helps you win the round. "
+        "Attack only with a move in attacks_in_reach. Do not jump in from far away: the CPU punishes jumps. "
+        "At long range, throw a fireball or duck. Block right after you get hit.",
+    },
+    # Control arm: uniform random baseline moves, no Clef call, same delay as a typical Clef answer.
+    "random": {"actions": ACTIONS, "reach": REACH, "instructions": ""},
 }
+
+
+def questions(variant):
+    v = VARIANTS[variant]
+    return {"action": {"type": "choice", "instructions": v["instructions"], "criteria": v["actions"]}}
 
 
 def plan_for(action, toward, away):
@@ -93,6 +117,11 @@ def plan_for(action, toward, away):
         "uppercut": [({"DOWN"}, 8)] + tap("DOWN", "HP"),  # crouch first, or the game reads a standing punch
         "sweep": tap("AWAY", "LK"),
         "roundhouse": tap("AWAY", "HK"),
+        "duck": hold("DOWN"),
+        # Forward, forward + button. Checked against an idle Jax: 17, 17 and 20 damage.
+        "fireball_high": [(pad("TOWARD"), 3), (set(), 3)] + tap("HP"),
+        "fireball_low": [(pad("TOWARD"), 3), (set(), 3), (pad("TOWARD"), 3), (set(), 2)] + tap("LP"),
+        "flying_kick": [(pad("TOWARD"), 3), (set(), 3)] + tap("TOWARD", "HK"),
     }[action]
     return [buttons for buttons, frames in plan for _ in range(frames)]
 
@@ -115,17 +144,24 @@ def bucket(px):
     return "very close" if px < 60 else "close" if px < 80 else "mid" if px < 100 else "far"
 
 
+# Opponent in each VeryEasy.LiuKang-NN save state, read off the health bars.
+LADDER = {2: "Rayden", 3: "Kitana", 4: "Kung Lao", 5: "Baraka", 6: "Reptile", 7: "Johnny Cage", 8: "Scorpion",
+          9: "Mileena", 10: "Sub-Zero", 11: "Liu Kang", 12: "Jade", 13: "Shang Tsung", 14: "Kintaro", 15: "Shao Kahn"}
+
+
 def matchup(state_name):
     m = re.search(r"([A-Za-z]+)Vs([A-Za-z]+)", state_name)
     if m:
         return f"You are {m[1]} (player 1). The CPU is {m[2]}."
-    m = re.search(r"\.([A-Za-z]+)-\d+$", state_name)  # VeryEasy.LiuKang-02 = Liu Kang's arcade ladder
-    return f"You are {m[1]} (player 1). The enemy is the CPU." if m else "You are player 1. The enemy is the CPU."
+    m = re.search(r"\.([A-Za-z]+)-(\d+)$", state_name)  # VeryEasy.LiuKang-02 = Liu Kang's arcade ladder
+    if m:
+        return f"You are {m[1]} (player 1). The CPU is {LADDER.get(int(m[2]), 'unknown')}."
+    return "You are player 1. The enemy is the CPU."
 
 
-def build_state(history, state_name):
+def build_state(history, state_name, variant="baseline"):
     """Game memory -> the JSON state that Clef reads. history = memory of the last frames, oldest first."""
-    info, prev = history[-1], history[0]
+    info, prev = history[-1], history[max(len(history) - 15, 0)]  # movement over the last 0.25 s
     dx = info["enemy_x_position"] - info["x_position"]
     ev = info["enemy_x_position"] - prev["enemy_x_position"]
     moving = "still" if abs(ev) < 2 else "toward me" if ev * dx < 0 else "away from me"
@@ -151,10 +187,13 @@ def build_state(history, state_name):
         "enemy_side": "right" if dx > 0 else "left",
         "distance": bucket(abs(dx)),
         "distance_px": abs(dx),
-        "attacks_in_reach": [a for a, r in REACH.items() if abs(dx) <= r],
+        "attacks_in_reach": [a for a, r in VARIANTS[variant]["reach"].items() if abs(dx) <= r],
         "health_lead_pct": me_hp - en_hp,
         # No move history here: in testing it made Clef repeat its last move.
-    }
+    } | ({
+        "i_got_hit_recently": info["health"] < history[0]["health"],  # history covers 0.75 s
+        "i_hit_enemy_recently": info["enemy_health"] < history[0]["enemy_health"],
+    } if variant == "tactics" else {})
 
 
 class Clef:
@@ -193,11 +232,13 @@ class Game:
         self.playing = False
         self.fighting = False
         self.state_name = ""
+        self.variant = args.variant
         self.info = None
-        self.history = deque(maxlen=15)  # last 15 frames of memory: enemy movement and jumps
+        self.history = deque(maxlen=45)  # last 0.75 s of memory: movement, jumps, recent hits
         self.plan = deque()
         self.last_seq = 0
         self.last_seq_sent = 0
+        self.round_decisions = 0
         self.inflight = 0
         self.last_moves = deque(maxlen=12)
         self.decision = None
@@ -229,8 +270,8 @@ class Game:
                 return None
             self.inflight += 1
             self.last_seq_sent += 1
-            state = build_state(list(self.history), self.state_name)
-            return self.last_seq_sent, state, self.jpeg if self.args.frame else None
+            state = build_state(list(self.history), self.state_name, self.variant)
+            return self.last_seq_sent, state, self.jpeg if self.args.frame else None, self.variant
 
     def apply(self, seq, state, answer, latency_ms, tokens):
         with self.lock:
@@ -242,8 +283,13 @@ class Game:
                 self.stats["stale"] += 1
                 return
             self.last_seq = seq
-            action = sample(answer["probabilities"], self.args.temperature)
-            toward = "RIGHT" if self.info["enemy_x_position"] > self.info["x_position"] else "LEFT"
+            probs = answer["probabilities"]
+            dx = self.info["enemy_x_position"] - self.info["x_position"]
+            if self.variant == "tactics" and abs(dx) > max(REACH.values()):  # guard: CPU anti-airs long jumps
+                probs = {k: p for k, p in probs.items() if k != "jump_in"}
+            action = sample(probs, self.args.temperature)
+            self.round_decisions += 1
+            toward = "RIGHT" if dx > 0 else "LEFT"
             away = "LEFT" if toward == "RIGHT" else "RIGHT"
             self.plan = deque(plan_for(action, toward, away))
             self.last_moves.append(action)
@@ -276,7 +322,8 @@ class Game:
                 "memory": self.info,
                 "decision": self.decision,
                 "recent": list(self.last_moves),
-                "actions": list(ACTIONS),
+                "actions": list(VARIANTS[self.variant]["actions"]),
+                "variant": self.variant,
                 "temperature": self.args.temperature,
                 "cost": {
                     "model": self.args.model,
@@ -347,16 +394,19 @@ def press(env, buttons):
     return env.step(np.array([b in buttons for b in env.buttons], dtype=np.int8))
 
 
-def game_loop(game, env, states):
-    for i in range(10**9):
-        name = states[i % len(states)]
+def game_loop(game, env, schedule, repeat=True, log=None):
+    """Play each (state, variant) round in order. With a log path, append one JSON line per round."""
+    for i in range(10**9 if repeat else len(schedule)):
+        name, variant = schedule[i % len(schedule)]
         env.load_state(name, INTTYPE)
         env.reset()
         with game.lock:
-            game.state_name, game.plan, game.decision = name, deque(), None
+            game.state_name, game.variant, game.plan, game.decision = name, variant, deque(), None
             game.history.clear()
             game.last_moves.clear()
-        frame_no, end_frame = 0, None
+            game.last_seq = game.last_seq_sent  # answers still in flight belong to the last round
+            game.round_decisions, tokens0, errors0 = 0, game.stats["tokens"], game.stats["errors"]
+        frame_no, end_frame, first = 0, None, None
         while end_frame is None or frame_no - end_frame < 3 * FPS:  # after the round, show the result 3 s
             t0 = time.perf_counter()
             if not game.playing:
@@ -366,11 +416,24 @@ def game_loop(game, env, states):
             game.fighting = end_frame is None
             obs, _, term, trunc, info = press(env, game.next_buttons() if game.fighting else set())
             game.on_frame(obs, info, frame_no)
+            first = first or info
             frame_no += 1
             if end_frame is None and (term or trunc or frame_no > 100 * FPS):
+                won = info["enemy_health"] < info["health"]
                 with game.lock:
                     game.fighting, game.plan = False, deque()
-                    game.score["clef" if info["enemy_health"] < info["health"] else "cpu"] += 1
+                    game.score["clef" if won else "cpu"] += 1
+                    result = {"state": name, "variant": variant, "won": won, "seconds": round(frame_no / FPS, 1),
+                              "damage_dealt": first["enemy_health"] - info["enemy_health"],
+                              "damage_taken": first["health"] - info["health"],
+                              "decisions": game.round_decisions, "tokens": game.stats["tokens"] - tokens0,
+                              "errors": game.stats["errors"] - errors0}
+                if log:
+                    with open(log, "a") as f:
+                        f.write(json.dumps(result) + "\n")
+                    print(f"{i + 1}/{len(schedule)} {name:<22} {variant:<9} {'WIN ' if won else 'loss'} "
+                          f"dealt {result['damage_dealt']:>3} taken {result['damage_taken']:>3} {result['seconds']:>5}s"
+                          + (f"  {result['errors']} Clef errors (quota?)" if result["errors"] else ""))
                 end_frame = frame_no
             time.sleep(max(0, 1 / FPS - (time.perf_counter() - t0)))
 
@@ -378,8 +441,11 @@ def game_loop(game, env, states):
 def brain_loop(game, clef, args):
     pool = ThreadPoolExecutor(args.max_inflight)
 
-    def decide(seq, state, jpeg):
-        body = {"model": clef.model, "state": state, "questions": QUESTIONS}
+    def decide(seq, state, jpeg, variant):
+        if variant == "random":
+            time.sleep(0.4)
+            return game.apply(seq, state, {"probabilities": dict.fromkeys(ACTIONS, 1 / len(ACTIONS))}, 400, 0)
+        body = {"model": clef.model, "state": state, "questions": questions(variant)}
         if jpeg:
             body["images"] = ["data:image/jpeg;base64," + base64.b64encode(jpeg).decode()]
         t0 = time.perf_counter()
@@ -446,9 +512,10 @@ def calibrate(env, states):
     """Play each move once from the first fight and save one labelled frame per move, to check PAD."""
     from PIL import Image, ImageDraw
 
-    sheet = Image.new("RGB", (320 * 4, 224 * 4), "white")
+    moves = VARIANTS["tactics"]["actions"]  # superset of the baseline moves
+    sheet = Image.new("RGB", (320 * 4, 224 * ((len(moves) + 3) // 4)), "white")
     draw = ImageDraw.Draw(sheet)
-    for i, action in enumerate(ACTIONS):
+    for i, action in enumerate(moves):
         env.load_state(states[0], INTTYPE)
         env.reset()
         for _ in range(INTRO_FRAMES + 10):
@@ -465,6 +532,27 @@ def calibrate(env, states):
     (HERE / "calibration").mkdir(exist_ok=True)
     sheet.save(HERE / "calibration" / "moves.png")
     print(f"Saved {HERE / 'calibration' / 'moves.png'}. If a move looks wrong, fix PAD or plan_for in mk2_clef.py.")
+
+
+def summarize(log, model="clef-flash"):
+    rows = [json.loads(line) for line in open(log)]
+    print(f"\n{'variant':<10}{'rounds':>7}{'wins':>6}{'dealt':>8}{'taken':>8}{'secs':>7}{'neurons':>9}")
+    for v in VARIANTS:
+        r = [x for x in rows if x["variant"] == v]
+        if r:
+            avg = lambda k: sum(x[k] for x in r) / len(r)  # noqa: E731
+            neurons = sum(x["tokens"] for x in r) * NEURONS_PER_M_INPUT[model] / 1e6
+            print(f"{v:<10}{len(r):>7}{sum(x['won'] for x in r):>6}{avg('damage_dealt'):>8.1f}"
+                  f"{avg('damage_taken'):>8.1f}{avg('seconds'):>7.1f}{neurons:>9.0f}")
+    by_fight = {}
+    for x in rows:
+        by_fight.setdefault(x["state"], {}).setdefault(x["variant"], []).append(x["damage_dealt"])
+    pairs = [(sum(f["tactics"]) / len(f["tactics"]), sum(f["baseline"]) / len(f["baseline"]))
+             for f in by_fight.values() if "tactics" in f and "baseline" in f]
+    print(f"tactics dealt more damage than baseline in {sum(t > b for t, b in pairs)} of {len(pairs)} fights, "
+          f"less in {sum(t < b for t, b in pairs)}.")
+    if any(x.get("errors") for x in rows):
+        print(f"WARNING: {sum(x.get('errors', 0) for x in rows)} Clef errors. Rounds with errors are not a fair test.")
 
 
 def load_env_file():
@@ -487,6 +575,9 @@ def main():
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--calibrate", action="store_true", help="save one frame per button to calibration/ and exit")
     p.add_argument("--rom", help="install your Genesis MK2 ROM (zip or bin) and exit")
+    p.add_argument("--variant", default="baseline", choices=list(VARIANTS), help="prompt, moves and state Clef gets")
+    p.add_argument("--ab", type=int, metavar="N", help="A/B test: play each VeryEasy Liu Kang fight N times per "
+                   "variant, headless, log to ab/, print results")
     args = p.parse_args()
     if args.rom:
         return install_rom(args.rom)
@@ -512,8 +603,20 @@ def main():
         raise SystemExit("Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in .env (see .env.example).")
 
     game = Game(args)
-    threading.Thread(target=game_loop, args=(game, env, states), daemon=True).start()
     threading.Thread(target=brain_loop, args=(game, Clef(args.model, account, token), args), daemon=True).start()
+    if args.ab:
+        # Same fight back to back for each variant, order flipped every fight, so time and latency drift cancel out.
+        ladder = [s for s in all_states if s.startswith("VeryEasy.LiuKang")]
+        schedule = [(s, v) for n in range(args.ab) for k, s in enumerate(ladder)
+                    for v in (list(VARIANTS) if (n + k) % 2 == 0 else list(VARIANTS)[::-1])]
+        log = HERE / "ab" / f"results-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+        log.parent.mkdir(exist_ok=True)
+        clef_rounds = sum(v != "random" for _, v in schedule)
+        print(f"A/B: {len(schedule)} rounds, about {clef_rounds * 20 * 14:,} neurons. Log: {log}")
+        game.playing = True
+        game_loop(game, env, schedule, repeat=False, log=log)
+        return summarize(log, args.model)
+    threading.Thread(target=game_loop, args=(game, env, [(s, args.variant) for s in states]), daemon=True).start()
     url = f"http://localhost:{args.port}"
     print(f"Open {url} and press Play. Ctrl+C to stop.")
     threading.Timer(1, webbrowser.open, [url]).start()
