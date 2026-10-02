@@ -1,0 +1,6 @@
+.env
+roms/
+calibration/
+__pycache__/
+integration/
+.DS_Store

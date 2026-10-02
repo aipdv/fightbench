@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Clef-flash plays Mortal Kombat II</title>
+<style>
+  :root { --bg: #fcf5dd; --ink: #161616; --muted: #6b6455; --bar: #161616; --hot: #c0392b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 "Nunito", ui-rounded, system-ui, sans-serif; }
+  .frame { margin: 24px; border: 1px solid var(--ink); padding: 20px 24px 24px; height: calc(100vh - 48px);
+           display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(320px, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 16px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  button { font: inherit; background: var(--ink); color: var(--bg); border: 0; padding: 6px 18px; border-radius: 4px; cursor: pointer; }
+  .box { border: 1px solid var(--ink); padding: 14px 16px; min-height: 0; overflow: auto; }
+  .game { grid-row: 2 / 4; display: flex; flex-direction: column; gap: 10px; }
+  .game img { width: 100%; flex: 1; min-height: 0; object-fit: contain; image-rendering: pixelated; background: #000; }
+  .game .meta { display: flex; justify-content: space-between; color: var(--muted); }
+  .game .meta b { color: var(--ink); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .now { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+  .sub { color: var(--muted); margin-bottom: 10px; }
+  .row { display: grid; grid-template-columns: 110px 1fr 46px; align-items: center; gap: 8px; font-size: 13px; margin: 1px 0; }
+  .track { height: 10px; border: 1px solid var(--ink); }
+  .fill { height: 100%; background: var(--bar); transition: width .12s; }
+  .row.on { font-weight: 700; } .row.on .fill { background: var(--hot); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .chip { border: 1px solid var(--ink); padding: 1px 6px; font-size: 12px; border-radius: 3px; }
+  details { margin-top: 10px; font-size: 12px; } pre { margin: 6px 0 0; white-space: pre-wrap; max-height: 180px; overflow: auto; }
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; font-size: 13px; }
+  .kv div { display: flex; justify-content: space-between; gap: 8px; } .kv b { font-variant-numeric: tabular-nums; }
+  .quota { height: 8px; border: 1px solid var(--ink); margin: 8px 0 4px; } .quota div { height: 100%; background: var(--bar); }
+  .err { color: var(--hot); font-size: 12px; margin-top: 6px; word-break: break-word; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <header><h1>Clef-flash plays Mortal Kombat II</h1><button id="play">Play</button></header>
+
+  <section class="box game">
+    <img src="/video" alt="Mortal Kombat II live gameplay">
+    <div class="meta"><span id="matchup">Press Play</span><span>Clef <b id="clef">0</b> : <b id="cpu">0</b> CPU</span></div>
+  </section>
+
+  <section class="box">
+    <h2>Strategy</h2>
+    <div class="now" id="now">Waiting</div>
+    <div class="sub" id="nowsub">No decision yet</div>
+    <div id="bars"></div>
+    <div class="strip" id="strip"></div>
+    <details><summary>State sent to Clef (from game memory)</summary><pre id="sent"></pre></details>
+  </section>
+
+  <section class="box">
+    <h2>Cost (Workers AI, this session)</h2>
+    <div class="kv" id="cost"></div>
+    <div class="quota"><div id="quota"></div></div>
+    <div class="sub" id="quotalabel"></div>
+    <div class="err" id="err"></div>
+  </section>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const label = a => a.replaceAll("_", " ");
+$("play").onclick = () => fetch("/toggle", { method: "POST" });
+
+async function tick() {
+  try {
+    const s = await (await fetch("/state")).json();
+    $("play").textContent = s.playing ? "Pause" : "Play";
+    $("matchup").textContent = s.playing ? s.matchup : "Press Play";
+    $("clef").textContent = s.score.clef; $("cpu").textContent = s.score.cpu;
+
+    const d = s.decision;
+    if (d) {
+      $("now").textContent = label(d.action);
+      $("nowsub").textContent = `confidence ${(100 * d.confidence).toFixed(0)}% · ${d.latency_ms} ms · temperature ${s.temperature}`;
+      $("bars").innerHTML = s.actions.map(a => {
+        const p = d.probabilities[a] || 0;
+        return `<div class="row ${a === d.action ? "on" : ""}"><span>${label(a)}</span>
+          <div class="track"><div class="fill" style="width:${(100 * p).toFixed(1)}%"></div></div>
+          <span class="num">${(100 * p).toFixed(1)}%</span></div>`;
+      }).join("");
+      $("sent").textContent = JSON.stringify(d.state, null, 2);
+    }
+    $("strip").innerHTML = s.recent.slice().reverse().map(a => `<span class="chip">${label(a)}</span>`).join("");
+
+    const c = s.cost;
+    const rows = [
+      ["Model", c.model],
+      ["Requests", c.requests],
+      ["Input tokens", c.tokens.toLocaleString()],
+      ["Neurons", c.neurons.toLocaleString()],
+      ["Cost (USD)", "$" + c.usd.toFixed(4)],
+      ["Latency p50", c.latency_median ? `${c.latency_median} ms` : "-"],
+      ["Latency p95", c.latency_p95 ? `${c.latency_p95} ms` : "-"],
+      ["Decisions/s", c.decisions_per_s],
+      ["Stale", c.stale],
+      ["Errors", c.errors],
+    ];
+    $("cost").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+    $("quota").style.width = `${100 * c.free_left / c.free_per_day}%`;
+    $("quotalabel").textContent = `Free today: ${c.free_left.toLocaleString()} of ${c.free_per_day.toLocaleString()} neurons left (this session only, resets 00:00 UTC)`;
+    $("err").textContent = c.last_error ? "Last error: " + c.last_error : "";
+  } catch (e) { /* server restarting */ }
+  setTimeout(tick, 150);
+}
+tick();
+</script>
+</body>
+</html>
