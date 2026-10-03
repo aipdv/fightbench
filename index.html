@@ -69,7 +69,7 @@ async function tick() {
   try {
     const s = await (await fetch("/state")).json();
     $("play").textContent = s.playing ? "Pause" : "Play";
-    $("matchup").textContent = s.playing ? s.matchup : "Press Play";
+    $("matchup").textContent = s.playing ? `${s.matchup} · variant: ${s.variant}` : "Press Play";
     $("clef").textContent = s.score.clef; $("cpu").textContent = s.score.cpu;
 
     const d = s.decision;

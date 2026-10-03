@@ -41,6 +41,8 @@ uv run mk2_clef.py --calibrate  # saves calibration/moves.png, one frame per mov
 | `--frame` | off | also send the game frame (about 75 more tokens per request) |
 | `--variant` | `baseline` | `tactics` or `random` (see A/B test) |
 | `--ab N` | off | headless A/B test, see below |
+| `--fights N` | 14 | A/B: only the first N ladder fights (saves quota) |
+| `--arms` | all variants | comma list of variants to run in A/B, e.g. `tactics,v2,random` |
 
 ## A/B test
 
@@ -54,6 +56,7 @@ Plays each of the 14 VeryEasy Liu Kang fights (Rayden to Shao Kahn) once per var
 |---|---|
 | `baseline` | 13 moves, distance, reach, health, enemy movement |
 | `tactics` | baseline + duck, high and low fireball, flying kick; "got hit / hit enemy in the last 0.75 s"; rules: no long jump-ins, fireball or duck at range, block after a hit. A code guard drops `jump_in` when nothing reaches. |
+| `v2` | same 17 moves as tactics with "Use when" descriptions matching state words; state is plain-English lines; adds `threat` question; code reflex blocks instantly when enemy attacks close; threat override when threat > 0.7 and close. |
 | `random` | control: uniform random moves at Clef's pace (0.4 s delay), no API calls |
 
 One run costs about 8,000 neurons (28 Clef rounds), so it needs a fresh free day or the Workers Paid plan. Rounds with Clef errors (for example, quota used up) are flagged in the summary.

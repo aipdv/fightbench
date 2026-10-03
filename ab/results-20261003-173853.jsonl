@@ -1,0 +1,15 @@
+{"state": "VeryEasy.LiuKang-02", "variant": "tactics", "won": false, "seconds": 13.1, "damage_dealt": 20, "damage_taken": 120, "decisions": 53, "tokens": 47608, "errors": 0}
+{"state": "VeryEasy.LiuKang-02", "variant": "v2", "won": false, "seconds": 23.5, "damage_dealt": 71, "damage_taken": 120, "decisions": 96, "tokens": 110043, "errors": 0}
+{"state": "VeryEasy.LiuKang-02", "variant": "random", "won": false, "seconds": 15.6, "damage_dealt": 55, "damage_taken": 120, "decisions": 110, "tokens": 0, "errors": 0}
+{"state": "VeryEasy.LiuKang-03", "variant": "random", "won": false, "seconds": 12.6, "damage_dealt": 32, "damage_taken": 120, "decisions": 92, "tokens": 0, "errors": 0}
+{"state": "VeryEasy.LiuKang-03", "variant": "v2", "won": false, "seconds": 21.4, "damage_dealt": 17, "damage_taken": 120, "decisions": 101, "tokens": 108692, "errors": 0}
+{"state": "VeryEasy.LiuKang-03", "variant": "tactics", "won": false, "seconds": 11.9, "damage_dealt": 41, "damage_taken": 120, "decisions": 41, "tokens": 39626, "errors": 0}
+{"state": "VeryEasy.LiuKang-04", "variant": "tactics", "won": true, "seconds": 25.5, "damage_dealt": 120, "damage_taken": 70, "decisions": 103, "tokens": 93969, "errors": 0}
+{"state": "VeryEasy.LiuKang-04", "variant": "v2", "won": false, "seconds": 23.2, "damage_dealt": 37, "damage_taken": 120, "decisions": 74, "tokens": 90055, "errors": 0}
+{"state": "VeryEasy.LiuKang-04", "variant": "random", "won": false, "seconds": 24.4, "damage_dealt": 115, "damage_taken": 120, "decisions": 173, "tokens": 0, "errors": 0}
+{"state": "VeryEasy.LiuKang-05", "variant": "random", "won": false, "seconds": 8.7, "damage_dealt": 56, "damage_taken": 120, "decisions": 61, "tokens": 0, "errors": 0}
+{"state": "VeryEasy.LiuKang-05", "variant": "v2", "won": false, "seconds": 18.4, "damage_dealt": 92, "damage_taken": 120, "decisions": 100, "tokens": 104377, "errors": 0}
+{"state": "VeryEasy.LiuKang-05", "variant": "tactics", "won": false, "seconds": 9.9, "damage_dealt": 0, "damage_taken": 120, "decisions": 58, "tokens": 46208, "errors": 0}
+{"state": "VeryEasy.LiuKang-06", "variant": "tactics", "won": false, "seconds": 27.7, "damage_dealt": 94, "damage_taken": 120, "decisions": 157, "tokens": 132490, "errors": 0}
+{"state": "VeryEasy.LiuKang-06", "variant": "v2", "won": false, "seconds": 17.2, "damage_dealt": 91, "damage_taken": 120, "decisions": 105, "tokens": 101378, "errors": 0}
+{"state": "VeryEasy.LiuKang-06", "variant": "random", "won": false, "seconds": 18.4, "damage_dealt": 30, "damage_taken": 120, "decisions": 130, "tokens": 0, "errors": 0}

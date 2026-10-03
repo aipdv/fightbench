@@ -84,10 +84,64 @@ VARIANTS = {
     "random": {"actions": ACTIONS, "reach": REACH, "instructions": ""},
 }
 
+# v2: same 17 moves as tactics, descriptions rewritten with "Use when" clauses for Clef-flash research finding.
+VARIANTS["v2"] = {
+    "actions": {
+        "approach": "Walk toward enemy. Use when no attack reaches and Enemy attacking now: no.",
+        "retreat": "Walk away from enemy. Use when Your health: critical and Enemy attacking now: yes.",
+        "jump_in": "Jump toward enemy. Use when distance is far and Enemy attacking now: no and Enemy airborne: no.",
+        "jump_back": "Jump away from enemy. Use when You got hit recently: yes and distance is very close.",
+        "block": "Stand and block. Use when Enemy attacking now: yes and distance is close or very close.",
+        "crouch_block": "Crouch and block low attacks. Use when Enemy attacking now: yes.",
+        "high_punch": "Fast high punch; at point-blank it becomes a throw beating a block. Use when distance is very close and Enemy attacking now: no.",
+        "low_punch": "Fast low punch. Use when distance is very close and Enemy attacking now: no.",
+        "high_kick": "High kick, more reach than a punch. Use when distance is close and Enemy attacking now: no.",
+        "low_kick": "Low kick, longest basic reach. Use when distance is close or mid and Enemy attacking now: no.",
+        "uppercut": "Crouching uppercut, beats jump-ins. Use when Enemy airborne: yes and distance is close or very close.",
+        "sweep": "Back plus low kick, trips enemy. Use when distance is close and Enemy attacking now: no.",
+        "roundhouse": "Back plus high kick, knocks enemy away. Use when distance is very close and Enemy attacking now: no.",
+        "duck": "Crouch without blocking; high projectiles fly over. Use when distance is far and Enemy attacking now: yes.",
+        "fireball_high": "Liu Kang high fireball, hits from any distance. Use when distance is far and Enemy attacking now: no.",
+        "fireball_low": "Liu Kang low fireball, hits from any distance. Use when distance is far and Enemy airborne: no and Enemy attacking now: no.",
+        "flying_kick": "Liu Kang flying kick, crosses range fast. Use when distance is mid or far and Enemy attacking now: no.",
+    },
+    "reach": VARIANTS["tactics"]["reach"],
+    "instructions": "What should Liu Kang do next?",
+}
+
+# RAM addresses for attack-flag signals (abs 68000 addresses, decimal). idx = (addr - 0xFF0000) ^ 1.
+_ENEMY_ATK_ADDR = 16758523
+_ME_ATK_ADDR = 16758283
+_ATK_FLAGS = {240, 244, 246, 250, 252}
+
+
+def read_flags(env, info):
+    """Read atk_flags from emulator RAM and annotate info in-place. Call after every env.step."""
+    ram = env.unwrapped.get_ram()
+    def _flag(addr):
+        return ram[(addr - 0xFF0000) ^ 1]
+    info["enemy_attacking"] = _flag(_ENEMY_ATK_ADDR) in _ATK_FLAGS
+    info["me_attacking"] = _flag(_ME_ATK_ADDR) in _ATK_FLAGS
+
+
+def reflex_block(history):
+    """Pure: should we block this frame? True when enemy was attacking last frame, close, and player grounded."""
+    if not history:
+        return False
+    if not history[-1].get("enemy_attacking"):
+        return False
+    dx = abs(history[-1].get("enemy_x_position", 999) - history[-1].get("x_position", 0))
+    if dx > 100:
+        return False
+    return not any(h.get("y_position", 0) != 0 for h in history[-5:])
+
 
 def questions(variant):
     v = VARIANTS[variant]
-    return {"action": {"type": "choice", "instructions": v["instructions"], "criteria": v["actions"]}}
+    q = {"action": {"type": "choice", "instructions": v["instructions"], "criteria": v["actions"]}}
+    if variant == "v2":
+        q["threat"] = {"type": "noul", "instructions": "Will the enemy hit you within the next half second?"}
+    return q
 
 
 def plan_for(action, toward, away):
@@ -160,7 +214,7 @@ def matchup(state_name):
 
 
 def build_state(history, state_name, variant="baseline"):
-    """Game memory -> the JSON state that Clef reads. history = memory of the last frames, oldest first."""
+    """Game memory -> state for Clef. Returns a string for v2, dict for all others."""
     info, prev = history[-1], history[max(len(history) - 15, 0)]  # movement over the last 0.25 s
     dx = info["enemy_x_position"] - info["x_position"]
     ev = info["enemy_x_position"] - prev["enemy_x_position"]
@@ -171,6 +225,26 @@ def build_state(history, state_name, variant="baseline"):
 
     me_hp = round(100 * info["health"] / MAX_HEALTH)
     en_hp = round(100 * info["enemy_health"] / MAX_HEALTH)
+
+    if variant == "v2":
+        def hw(pct):
+            return "critical" if pct < 25 else "low" if pct < 50 else "medium" if pct < 75 else "high"
+        dist = bucket(abs(dx))
+        side = "right" if dx > 0 else "left"
+        mv = moving.replace("me", "you")
+        enemy_atk = any(h.get("enemy_attacking") for h in history[-3:])
+        reaches = [a.replace("_", " ") for a, r in VARIANTS["tactics"]["reach"].items() if abs(dx) <= r]
+        got_hit = info["health"] < history[0]["health"]
+        hit_enemy = info["enemy_health"] < history[0]["enemy_health"]
+        mu = re.sub(r" \(player 1\)", "", matchup(state_name))
+        return "\n".join([
+            mu,
+            f"Distance: {dist}. Enemy side: {side}. Enemy moving: {mv}.",
+            f"Enemy attacking now: {'yes' if enemy_atk else 'no'}. Enemy airborne: {'yes' if airborne('enemy_y_position') else 'no'}. You airborne: {'yes' if airborne('y_position') else 'no'}.",
+            f"Your health: {hw(me_hp)}. Enemy health: {hw(en_hp)}. You got hit recently: {'yes' if got_hit else 'no'}. You hit the enemy recently: {'yes' if hit_enemy else 'no'}.",
+            f"Attacks that reach: {', '.join(reaches) if reaches else 'none'}.",
+        ])
+
     return {
         "matchup": matchup(state_name),
         "me": {
@@ -266,14 +340,14 @@ class Game:
 
     def snapshot(self):
         with self.lock:
-            if not (self.playing and self.fighting and self.info and self.inflight < self.args.max_inflight):
+            if not (self.playing and self.fighting and self.history and self.inflight < self.args.max_inflight):
                 return None
             self.inflight += 1
             self.last_seq_sent += 1
             state = build_state(list(self.history), self.state_name, self.variant)
             return self.last_seq_sent, state, self.jpeg if self.args.frame else None, self.variant
 
-    def apply(self, seq, state, answer, latency_ms, tokens):
+    def apply(self, seq, state, answers, latency_ms, tokens):
         with self.lock:
             self.inflight -= 1
             self.stats["requests"] += 1
@@ -283,11 +357,17 @@ class Game:
                 self.stats["stale"] += 1
                 return
             self.last_seq = seq
-            probs = answer["probabilities"]
+            action_ans = answers["action"]
+            probs = action_ans["probabilities"]
             dx = self.info["enemy_x_position"] - self.info["x_position"]
-            if self.variant == "tactics" and abs(dx) > max(REACH.values()):  # guard: CPU anti-airs long jumps
+            if self.variant in ("tactics", "v2") and abs(dx) > max(REACH.values()):  # guard: CPU anti-airs long jumps
                 probs = {k: p for k, p in probs.items() if k != "jump_in"}
             action = sample(probs, self.args.temperature)
+            threat = answers.get("threat", {}).get("noul") if self.variant == "v2" else None
+            overridden_by = None
+            if threat is not None and threat > 0.7 and abs(dx) <= 100:
+                action = "block"
+                overridden_by = "threat"
             self.round_decisions += 1
             toward = "RIGHT" if dx > 0 else "LEFT"
             away = "LEFT" if toward == "RIGHT" else "RIGHT"
@@ -296,11 +376,15 @@ class Game:
             self.decided_at.append(time.time())
             self.decision = {
                 "action": action,
-                "probabilities": answer["probabilities"],
-                "confidence": answer.get("confidence"),
+                "probabilities": action_ans["probabilities"],
+                "confidence": action_ans.get("confidence"),
                 "latency_ms": round(latency_ms),
                 "state": state,
             }
+            if threat is not None:
+                self.decision["threat"] = threat
+            if overridden_by:
+                self.decision["overridden_by"] = overridden_by
 
     def fail(self, error):
         with self.lock:
@@ -414,7 +498,16 @@ def game_loop(game, env, schedule, repeat=True, log=None):
                 continue
             # Decide from frame 0: intro length differs per save state, and idling during a fight is worse.
             game.fighting = end_frame is None
-            obs, _, term, trunc, info = press(env, game.next_buttons() if game.fighting else set())
+            buttons = game.next_buttons() if game.fighting else set()
+            if game.variant == "v2" and game.fighting:
+                with game.lock:
+                    hist = list(game.history)
+                if reflex_block(hist):
+                    buttons = PAD["BL"]
+                    with game.lock:
+                        game.plan.clear()
+            obs, _, term, trunc, info = press(env, buttons)
+            read_flags(env, info)
             game.on_frame(obs, info, frame_no)
             first = first or info
             frame_no += 1
@@ -444,7 +537,7 @@ def brain_loop(game, clef, args):
     def decide(seq, state, jpeg, variant):
         if variant == "random":
             time.sleep(0.4)
-            return game.apply(seq, state, {"probabilities": dict.fromkeys(ACTIONS, 1 / len(ACTIONS))}, 400, 0)
+            return game.apply(seq, state, {"action": {"probabilities": dict.fromkeys(ACTIONS, 1 / len(ACTIONS))}}, 400, 0)
         body = {"model": clef.model, "state": state, "questions": questions(variant)}
         if jpeg:
             body["images"] = ["data:image/jpeg;base64," + base64.b64encode(jpeg).decode()]
@@ -453,7 +546,7 @@ def brain_loop(game, clef, args):
             result = clef.ask(body)
         except Exception as e:  # network or quota errors: show them in the cost panel, keep playing
             return game.fail(e)
-        game.apply(seq, state, result["answers"]["action"], (time.perf_counter() - t0) * 1000,
+        game.apply(seq, state, result["answers"], (time.perf_counter() - t0) * 1000,
                    result.get("usage", {}).get("input_tokens", 0))
 
     while True:
@@ -547,10 +640,12 @@ def summarize(log, model="clef-flash"):
     by_fight = {}
     for x in rows:
         by_fight.setdefault(x["state"], {}).setdefault(x["variant"], []).append(x["damage_dealt"])
-    pairs = [(sum(f["tactics"]) / len(f["tactics"]), sum(f["baseline"]) / len(f["baseline"]))
-             for f in by_fight.values() if "tactics" in f and "baseline" in f]
-    print(f"tactics dealt more damage than baseline in {sum(t > b for t, b in pairs)} of {len(pairs)} fights, "
-          f"less in {sum(t < b for t, b in pairs)}.")
+    for v1, v2 in [("tactics", "baseline"), ("v2", "tactics")]:
+        pairs = [(sum(f[v1]) / len(f[v1]), sum(f[v2]) / len(f[v2]))
+                 for f in by_fight.values() if v1 in f and v2 in f]
+        if pairs:
+            print(f"{v1} dealt more damage than {v2} in {sum(a > b for a, b in pairs)} of {len(pairs)} fights, "
+                  f"less in {sum(a < b for a, b in pairs)}.")
     if any(x.get("errors") for x in rows):
         print(f"WARNING: {sum(x.get('errors', 0) for x in rows)} Clef errors. Rounds with errors are not a fair test.")
 
@@ -578,6 +673,8 @@ def main():
     p.add_argument("--variant", default="baseline", choices=list(VARIANTS), help="prompt, moves and state Clef gets")
     p.add_argument("--ab", type=int, metavar="N", help="A/B test: play each VeryEasy Liu Kang fight N times per "
                    "variant, headless, log to ab/, print results")
+    p.add_argument("--arms", default=",".join(VARIANTS), help="comma list of variants for A/B (default all)")
+    p.add_argument("--fights", type=int, default=14, help="A/B: first N of the 14 ladder fights (saves quota)")
     args = p.parse_args()
     if args.rom:
         return install_rom(args.rom)
@@ -606,14 +703,17 @@ def main():
     threading.Thread(target=brain_loop, args=(game, Clef(args.model, account, token), args), daemon=True).start()
     if args.ab:
         # Same fight back to back for each variant, order flipped every fight, so time and latency drift cancel out.
-        ladder = [s for s in all_states if s.startswith("VeryEasy.LiuKang")]
+        ladder = [s for s in all_states if s.startswith("VeryEasy.LiuKang")][: args.fights]
+        arms = [v for v in args.arms.split(",") if v in VARIANTS]
         schedule = [(s, v) for n in range(args.ab) for k, s in enumerate(ladder)
-                    for v in (list(VARIANTS) if (n + k) % 2 == 0 else list(VARIANTS)[::-1])]
+                    for v in (arms if (n + k) % 2 == 0 else arms[::-1])]
         log = HERE / "ab" / f"results-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
         log.parent.mkdir(exist_ok=True)
         clef_rounds = sum(v != "random" for _, v in schedule)
         print(f"A/B: {len(schedule)} rounds, about {clef_rounds * 20 * 14:,} neurons. Log: {log}")
         game.playing = True
+        threading.Thread(target=serve, args=(game, args.port), daemon=True).start()  # watch or record the run
+        print(f"Watch: http://localhost:{args.port}")
         game_loop(game, env, schedule, repeat=False, log=log)
         return summarize(log, args.model)
     threading.Thread(target=game_loop, args=(game, env, [(s, args.variant) for s in states]), daemon=True).start()

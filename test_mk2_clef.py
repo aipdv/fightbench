@@ -1,7 +1,7 @@
 """Checks for the pure logic. Run: python3 test_mk2_clef.py"""
 import random
 
-from mk2_clef import ACTIONS, build_state, plan_for, sample
+from mk2_clef import ACTIONS, VARIANTS, build_state, plan_for, questions, reflex_block, sample
 
 # Every action maps to buttons. Buttons follow the 3-button layout checked with --calibrate.
 for a in ACTIONS:
@@ -35,7 +35,7 @@ assert s["me"]["health_pct"] == 50 and s["health_lead_pct"] == -50, s
 assert s["distance"] == "mid" and s["matchup"].startswith("You are LiuKang"), s
 assert s["attacks_in_reach"] == ["low_kick", "sweep"], s  # 90 px: only the long low attacks reach
 assert build_state([frame(250, 0)] * 15, "x")["attacks_in_reach"] == []
-from mk2_clef import VARIANTS, matchup, questions
+from mk2_clef import matchup
 assert matchup("VeryEasy.LiuKang-08") == "You are LiuKang (player 1). The CPU is Scorpion.", matchup("VeryEasy.LiuKang-08")
 
 # Tactics variant: specials are forward, forward + button; hit signals come from the 0.75 s history.
@@ -48,4 +48,32 @@ t = build_state(hit, "VeryEasy.LiuKang-02", "tactics")
 assert t["i_got_hit_recently"] and not t["i_hit_enemy_recently"], t
 assert "fireball_high" in t["attacks_in_reach"] and "i_got_hit_recently" not in build_state(hit, "x"), t
 assert set(VARIANTS["baseline"]["actions"]) < set(questions("tactics")["action"]["criteria"])
+
+# v2 variant: state is a string; every action description has "Use when"; questions has threat.
+def frame_ea(ex, ey, ea=False):
+    f = frame(ex, ey)
+    f["enemy_attacking"] = ea
+    return f
+
+hist_v2_atk = [frame_ea(200, 0)] * 10 + [frame_ea(190, 0, ea=True)] * 3
+s_v2 = build_state(hist_v2_atk, "VeryEasy.LiuKang-08", "v2")
+assert isinstance(s_v2, str), "v2 state must be a string"
+assert "Enemy attacking now: yes" in s_v2, s_v2
+
+for k, v in VARIANTS["v2"]["actions"].items():
+    assert "Use when" in v, f"v2 action {k!r} missing 'Use when': {v!r}"
+
+q_v2 = questions("v2")
+assert "action" in q_v2 and "threat" in q_v2, q_v2
+assert "threat" not in questions("tactics"), "threat must not appear in non-v2 questions"
+
+# reflex_block: pure function; True = attacking + close + grounded, False otherwise.
+def rframe(ea=False, dist=50, y=0):
+    return {"x_position": 0, "enemy_x_position": dist, "y_position": y, "enemy_y_position": 0, "enemy_attacking": ea}
+
+assert reflex_block([rframe(ea=True, dist=50)] * 5), "should block: attacking, close, grounded"
+assert not reflex_block([rframe(ea=True, dist=150)] * 5), "should not block: far"
+assert not reflex_block([rframe(ea=False, dist=50)] * 5), "should not block: not attacking"
+assert not reflex_block([rframe(ea=True, dist=50, y=1)] * 5), "should not block: airborne"
+
 print("ok")
