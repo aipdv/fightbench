@@ -43,6 +43,9 @@ uv run mk2_clef.py --calibrate  # saves calibration/moves.png, one frame per mov
 | `--ab N` | off | headless A/B test, see below |
 | `--fights N` | 14 | A/B: only the first N ladder fights (saves quota) |
 | `--arms` | all variants | comma list of variants to run in A/B, e.g. `tactics,v2,random` |
+| `--sim` | off | headless unpaced experiment, e.g. `random@0,script@24,clef2@0` |
+| `--repeats` | `3` | sim: rounds per fight per arm |
+| `--ladder` | `VeryEasy.LiuKang` | sim: save-state prefix; `LiuKangVs` = the 15 VeryHard fights (held out) |
 
 ## A/B test
 
@@ -58,6 +61,21 @@ Plays each of the 14 VeryEasy Liu Kang fights (Rayden to Shao Kahn) once per var
 | `tactics` | baseline + duck, high and low fireball, flying kick; "got hit / hit enemy in the last 0.75 s"; rules: no long jump-ins, fireball or duck at range, block after a hit. A code guard drops `jump_in` when nothing reaches. |
 | `v2` | same 17 moves as tactics with "Use when" descriptions matching state words; state is plain-English lines; adds `threat` question; code reflex blocks instantly when enemy attacks close; threat override when threat > 0.7 and close. |
 | `random` | control: uniform random moves at Clef's pace (0.4 s delay), no API calls |
+
+**Sim mode** (`--sim`) runs the same 14 fights headlessly with code-only arms (no Clef, no credentials, unpaced). Arms are `random`, `script`, or either with `+reflex`; append `@N` to set latency in frames (default 24 ≈ Clef's 400 ms). Results go to `ab/sim-*.jsonl`. Useful for H1 (does reflex help?), H2 (does lag hurt?), H3 (does a script beat random?).
+
+**Clef table arms** (`clef`, `clef2`, `clef3`, `clef4`, prompts in `TABLE_PROMPTS`). Clef answers one `choice` question per situation (enemy jumps, enemy attacks close, 60 to 80 px, and so on) for each opponent. Code only detects the situation each frame and samples Clef's answer for it. Answers are cached in `ab/clef-cache.json`, so play has no model delay and repeats are free. A new prompt costs about 500 neurons for 14 opponents. Use `--temperature 1` (Clef's raw distribution): it beat 0 and 0.3, because the CPU punishes predictable play.
+
+Results (2026-10-05, 10 repeats):
+
+| Arm | VeryEasy wins / 140 | dealt | VeryHard (held out) wins / 150 | dealt |
+|---|---|---|---|---|
+| random | 0 | 19.6 | 0 | 8.7 |
+| script (rules bot) | 8 | 47.4 | 2 | 33.6 |
+| clef2 (reach in px, distance bands) | **20** | **54.9** | 0 | 28.4 |
+| clef4 (clef2 + matching "Use when") | 13 | 52.1 | 1 | **35.5** |
+
+How Clef behaves: an open "what now?" question gets a near-flat answer, but a question that names the situation gets a sharp one. Counts in the state ("hit 0 of 4") barely change its answer. It matches words between the situation and the option text, so a conditional clause ("best from more than 100 px") can raise a move's score in the wrong situation.
 
 One run costs about 8,000 neurons (28 Clef rounds), so it needs a fresh free day or the Workers Paid plan. Rounds with Clef errors (for example, quota used up) are flagged in the summary.
 

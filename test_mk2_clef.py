@@ -1,7 +1,7 @@
 """Checks for the pure logic. Run: python3 test_mk2_clef.py"""
 import random
 
-from mk2_clef import ACTIONS, VARIANTS, build_state, plan_for, questions, reflex_block, sample
+from mk2_clef import ACTIONS, VARIANTS, build_state, parse_arm, plan_for, questions, reflex_block, sample, script_policy
 
 # Every action maps to buttons. Buttons follow the 3-button layout checked with --calibrate.
 for a in ACTIONS:
@@ -76,4 +76,32 @@ assert not reflex_block([rframe(ea=True, dist=150)] * 5), "should not block: far
 assert not reflex_block([rframe(ea=False, dist=50)] * 5), "should not block: not attacking"
 assert not reflex_block([rframe(ea=True, dist=50, y=1)] * 5), "should not block: airborne"
 
+# script_policy (pure, no emulator): close airborne → uppercut, attacking close → crouch_block,
+# far idle → fireball/flying_kick; arm-name parsing → policy, reflex, lag.
+def sframe(ex, ey=0, ea=False):
+    return {"x_position": 100, "enemy_x_position": ex, "y_position": 0, "enemy_y_position": ey,
+            "health": 60, "enemy_health": 120, "enemy_attacking": ea}
+
+_rng = random.Random(0)
+close_air = [sframe(160, 0)] * 10 + [sframe(160, -2)]  # dx=60, airborne
+assert script_policy(close_air, _rng) == "uppercut", "close airborne → uppercut"
+atk_close = [sframe(140, ea=True)]  # dx=40 ≤ 100, attacking, grounded
+assert script_policy(atk_close, _rng) == "crouch_block", "attacking close → crouch_block"
+far_idle = [sframe(320)] * 15  # dx=220 > 100, grounded, idle
+assert script_policy(far_idle, _rng) in ("fireball_high", "fireball_low"), "far idle → fireball"
+spec, policy_fn, use_reflex, lag = parse_arm("script+reflex@12")
+assert policy_fn is script_policy, "parse_arm: policy"
+assert use_reflex is True, "parse_arm: reflex"
+assert lag == 12, "parse_arm: lag"
+
 print("ok")
+
+# Situation detection for the Clef arm: jump beats everything near, then attack, then distance.
+from mk2_clef import situation
+assert situation([frame(190, 0)] * 4 + [frame(190, -3)]) == "enemy_jump"
+assert situation([frame(150, 0)] * 5) == "point_blank"
+assert situation([frame(175, 0)] * 5) == "close"
+assert situation([frame(190, 0)] * 5) == "mid"
+assert situation([frame(240, 0)] * 5) == "far"
+assert situation([frame(300, 0)] * 5) == "full_screen"
+assert situation([frame(190, 0)] * 4 + [frame(190, 0) | {"enemy_attacking": True}]) == "close_attack"

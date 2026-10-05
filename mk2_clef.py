@@ -32,6 +32,7 @@ USD_PER_1K_NEURONS = 0.011
 
 INTRO_FRAMES = 200  # "ROUND 1" and "FIGHT!" in Level1 states (calibration waits this out)
 MAX_HEALTH = 120  # full health bar in memory
+DECISION_EVERY = 15  # frames between policy decisions in sim mode (0.25 s)
 
 # stable-retro emulates a 3-button pad: X, Y and Z do nothing. High punch is toward + A.
 # Checked frame by frame with --calibrate on the (W) ROM, 2026-10-02.
@@ -82,6 +83,8 @@ VARIANTS = {
     },
     # Control arm: uniform random baseline moves, no Clef call, same delay as a typical Clef answer.
     "random": {"actions": ACTIONS, "reach": REACH, "instructions": ""},
+    # Control arm: the hand-written script_policy at Clef's pace, no API calls.
+    "script": {"actions": {}, "reach": REACH, "instructions": ""},
 }
 
 # v2: same 17 moves as tactics, descriptions rewritten with "Use when" clauses for Clef-flash research finding.
@@ -134,6 +137,146 @@ def reflex_block(history):
     if dx > 100:
         return False
     return not any(h.get("y_position", 0) != 0 for h in history[-5:])
+
+
+# Clef table prompts: situations the executor can detect, and the moves Clef picks from.
+TABLE_PROMPTS = {
+    "clef": ({
+        "enemy_jump": "The enemy jumps at you.",
+        "close_attack": "The enemy attacks you up close.",
+        "far_attack": "The enemy attacks from far away, maybe with a projectile.",
+        "point_blank": "You stand face to face. The enemy is not attacking.",
+        "close": "The enemy is at kicking distance and not attacking.",
+        "far": "The enemy is far away and not attacking.",
+    }, VARIANTS["tactics"]["actions"]),
+    # v2: measured reach in every move, distance bands in every situation.
+    "clef2": ({
+        "enemy_jump": "The enemy is in the air, less than 150 px away.",
+        "close_attack": "The enemy is attacking, less than 100 px away.",
+        "far_attack": "The enemy is attacking from more than 100 px away, maybe with a projectile.",
+        "point_blank": "The enemy is less than 60 px away and not attacking.",
+        "close": "The enemy is 60 to 80 px away and not attacking.",
+        "mid": "The enemy is 80 to 100 px away and not attacking.",
+        "far": "The enemy is 100 to 150 px away and not attacking.",
+        "full_screen": "The enemy is more than 150 px away and not attacking.",
+    }, {
+        "approach": "Walk toward the enemy.",
+        "retreat": "Walk away from the enemy.",
+        "jump_in": "Jump toward the enemy. Easy to punish if the enemy is ready.",
+        "jump_back": "Jump away from the enemy.",
+        "block": "Stand and block. Stops high and mid attacks.",
+        "crouch_block": "Crouch and block. Stops low attacks.",
+        "duck": "Crouch without blocking. High projectiles fly over you.",
+        "high_punch": "Fast high punch. Reach 70 px. Under 50 px it becomes a throw, which beats blocking.",
+        "low_punch": "Fast low punch. Reach 70 px.",
+        "high_kick": "High kick. Reach 79 px.",
+        "low_kick": "Low kick. Reach 90 px.",
+        "uppercut": "Crouching uppercut. Reach 70 px. Big damage, beats a jump-in.",
+        "sweep": "Back + low kick. Reach 94 px. Knocks the enemy down.",
+        "roundhouse": "Back + high kick. Reach 75 px. Knocks the enemy away.",
+        "fireball_high": "High fireball. Hits at any distance. 17 damage.",
+        "fireball_low": "Low fireball. Hits at any distance. 17 damage.",
+        "flying_kick": "Flying kick. Crosses 100 to 150 px fast. 20 damage.",
+    }),
+}
+# v3: coach edits from measured outcomes of v2 (ab/sim logs, 2026-10-05): attacks up close were 17% of the time
+# and 62% of the damage taken; trading lost, block lost least; fireballs were punished inside 100 px.
+_V3_SIT, _V3_MOVES = dict(TABLE_PROMPTS["clef2"][0]), dict(TABLE_PROMPTS["clef2"][1])
+_V3_SIT["close_attack"] = ("The enemy's attack is already coming out, less than 100 px away. "
+                           "An attack you start now usually trades or loses.")
+_V3_MOVES.update({
+    "block": "Stand and block. Stops high and mid attacks. The safest answer when an attack is already coming.",
+    "fireball_high": "High fireball. Hits at any distance. 17 damage. Slow to start: best from more than 100 px.",
+    "fireball_low": "Low fireball. Hits at any distance. 17 damage. Slow to start: best from more than 100 px.",
+    "flying_kick": "Flying kick. Crosses 100 to 150 px fast. 20 damage. Misses an enemy in the air.",
+})
+TABLE_PROMPTS["clef3"] = (_V3_SIT, _V3_MOVES)
+# v4: Clef matches words, so each move gets a "Use when" that repeats the situation text where v2's measured
+# outcomes were best (more dealt, less taken). v3's conditional clauses backfired: "best from more than 100 px"
+# raised fireball picks inside 100 px.
+_S = TABLE_PROMPTS["clef2"][0]
+_V4_USE = {
+    "flying_kick": ["far", "full_screen"], "approach": ["full_screen"], "sweep": ["mid"], "low_kick": ["close", "mid"],
+    "block": ["close_attack"], "roundhouse": ["close_attack"], "high_punch": ["point_blank"],
+    "fireball_high": ["far_attack"], "uppercut": ["enemy_jump"],
+}
+TABLE_PROMPTS["clef4"] = (_S, {m: d + (" Use when: " + " Or: ".join(_S[k] for k in _V4_USE[m]) if m in _V4_USE else "")
+                               for m, d in TABLE_PROMPTS["clef2"][1].items()})
+COARSER = {"mid": "close", "full_screen": "far"}  # for prompts without the finer bands
+
+
+def situation(history):
+    """Which situation holds now. The only game logic in the Clef arm: detection, no choices."""
+    info = history[-1]
+    dx = abs(info["enemy_x_position"] - info["x_position"])
+    if dx < 150 and any(h["enemy_y_position"] != 0 for h in history[-5:]):
+        return "enemy_jump"
+    attacking = any(h.get("enemy_attacking") for h in history[-3:])
+    if attacking:
+        return "far_attack" if dx > 100 else "close_attack"
+    return "point_blank" if dx < 60 else "close" if dx < 80 else "mid" if dx <= 100 else "far" if dx <= 150 else "full_screen"
+
+
+class ClefTable:
+    """Clef answers one question per situation; code plays Clef's pick for the situation it sees.
+    Answers are cached on disk by request, so repeats are free and there is no delay."""
+
+    def __init__(self, clef, temperature, prompt="clef", path=HERE / "ab" / "clef-cache.json"):
+        self.clef, self.temperature, self.path, self.tokens = clef, temperature, path, 0
+        self.situations, self.moves = TABLE_PROMPTS[prompt]
+        self.cache = json.loads(path.read_text()) if path.exists() else {}
+
+    def tables(self, state_name):
+        body = {"model": self.clef.model, "state": matchup(state_name).replace(" (player 1)", ""),
+                "questions": {k: {"type": "choice", "instructions": f"{d} Which move do you use?",
+                                  "criteria": self.moves} for k, d in self.situations.items()}}
+        key = json.dumps(body, sort_keys=True)
+        if key not in self.cache:
+            r = self.clef.ask(body)
+            self.tokens += r.get("usage", {}).get("input_tokens", 0)
+            self.cache[key] = {k: a["probabilities"] for k, a in r["answers"].items()}
+            self.path.write_text(json.dumps(self.cache))
+        return self.cache[key]
+
+    def __call__(self, history, rng, state_name=None):
+        sit = situation(history)
+        return sample(self.tables(state_name)[sit if sit in self.situations else COARSER[sit]], self.temperature, rng)
+
+
+def _random_policy(history, rng, state_name=None):
+    return rng.choice(list(ACTIONS))
+
+
+def script_policy(history, rng, state_name=None):
+    """Pure rules policy for sim experiments. < 25 lines. Uses signals available in RAM memory."""
+    if not history:
+        return rng.choice(list(ACTIONS))
+    info = history[-1]
+    dx = abs(info.get("enemy_x_position", 200) - info.get("x_position", 0))
+    airborne = any(h.get("enemy_y_position", 0) != 0 for h in history[-5:])
+    enemy_atk = any(h.get("enemy_attacking", False) for h in history[-3:])
+    if airborne and dx <= 80:
+        return "uppercut"
+    if enemy_atk and dx <= 100:
+        return "crouch_block"
+    if dx > 100:
+        choices = ["fireball_high", "fireball_low", "flying_kick"] if dx <= 150 else ["fireball_high", "fireball_low"]
+        return rng.choice(choices)
+    if dx <= 80:
+        return rng.choice(["high_punch", "roundhouse", "sweep", "uppercut", "low_kick"])
+    return rng.choice(["sweep", "low_kick"])  # 80 < dx <= 100, not attacking
+
+
+def parse_arm(spec, tables=None):
+    """'script+reflex@12' → (spec_str, policy_fn, use_reflex, lag). Default lag=24."""
+    base, lag = spec, 24
+    if "@" in spec:
+        base, lag_s = spec.rsplit("@", 1)
+        lag = int(lag_s)
+    use_reflex = base.endswith("+reflex")
+    policy_name = base.removesuffix("+reflex")
+    policy = {"script": script_policy, **(tables or {})}.get(policy_name, _random_policy)
+    return spec, policy, use_reflex, lag
 
 
 def questions(variant):
@@ -345,6 +488,8 @@ class Game:
             self.inflight += 1
             self.last_seq_sent += 1
             state = build_state(list(self.history), self.state_name, self.variant)
+            if self.variant == "script":  # decide from memory now; the 0.4 s delay comes in decide()
+                state = {"script_action": script_policy(list(self.history), random)}
             return self.last_seq_sent, state, self.jpeg if self.args.frame else None, self.variant
 
     def apply(self, seq, state, answers, latency_ms, tokens):
@@ -535,6 +680,9 @@ def brain_loop(game, clef, args):
     pool = ThreadPoolExecutor(args.max_inflight)
 
     def decide(seq, state, jpeg, variant):
+        if variant == "script":
+            time.sleep(0.4)
+            return game.apply(seq, state, {"action": {"probabilities": {state["script_action"]: 1.0}}}, 400, 0)
         if variant == "random":
             time.sleep(0.4)
             return game.apply(seq, state, {"action": {"probabilities": dict.fromkeys(ACTIONS, 1 / len(ACTIONS))}}, 400, 0)
@@ -627,16 +775,18 @@ def calibrate(env, states):
     print(f"Saved {HERE / 'calibration' / 'moves.png'}. If a move looks wrong, fix PAD or plan_for in mk2_clef.py.")
 
 
+
 def summarize(log, model="clef-flash"):
     rows = [json.loads(line) for line in open(log)]
-    print(f"\n{'variant':<10}{'rounds':>7}{'wins':>6}{'dealt':>8}{'taken':>8}{'secs':>7}{'neurons':>9}")
-    for v in VARIANTS:
+    print(f"\n{'variant':<20}{'rounds':>7}{'wins':>6}{'dealt':>8}{'taken':>8}{'margin ±95%':>14}{'secs':>7}{'neurons':>9}")
+    for v in dict.fromkeys(x["variant"] for x in rows):
         r = [x for x in rows if x["variant"] == v]
-        if r:
-            avg = lambda k: sum(x[k] for x in r) / len(r)  # noqa: E731
-            neurons = sum(x["tokens"] for x in r) * NEURONS_PER_M_INPUT[model] / 1e6
-            print(f"{v:<10}{len(r):>7}{sum(x['won'] for x in r):>6}{avg('damage_dealt'):>8.1f}"
-                  f"{avg('damage_taken'):>8.1f}{avg('seconds'):>7.1f}{neurons:>9.0f}")
+        avg = lambda k: sum(x[k] for x in r) / len(r)  # noqa: E731
+        margins = [x["damage_dealt"] - x["damage_taken"] for x in r]
+        ci = 1.96 * statistics.stdev(margins) / len(r) ** 0.5 if len(r) > 1 else 0
+        neurons = sum(x["tokens"] for x in r) * NEURONS_PER_M_INPUT[model] / 1e6
+        print(f"{v:<20}{len(r):>7}{sum(x['won'] for x in r):>6}{avg('damage_dealt'):>8.1f}"
+              f"{avg('damage_taken'):>8.1f}{statistics.mean(margins):>8.1f} ±{ci:<4.0f}{avg('seconds'):>7.1f}{neurons:>9.0f}")
     by_fight = {}
     for x in rows:
         by_fight.setdefault(x["state"], {}).setdefault(x["variant"], []).append(x["damage_dealt"])
@@ -648,6 +798,116 @@ def summarize(log, model="clef-flash"):
                   f"less in {sum(a < b for a, b in pairs)}.")
     if any(x.get("errors") for x in rows):
         print(f"WARNING: {sum(x.get('errors', 0) for x in rows)} Clef errors. Rounds with errors are not a fair test.")
+
+
+def sim_round(env, state_name, arm_spec, policy_fn, use_reflex, lag, rng):
+    """Run one headless unpaced round. No sleep, no web server. Returns result dict."""
+    env.load_state(state_name, INTTYPE)
+    env.reset()
+    history = deque(maxlen=45)
+    plan = deque()
+    pending = []  # [(apply_at_frame, action)]
+    frame_no, first_info, decisions = 0, None, 0
+    while True:
+        toward, away = "RIGHT", "LEFT"
+        if history:
+            dx_now = history[-1].get("enemy_x_position", 200) - history[-1].get("x_position", 0)
+            toward = "RIGHT" if dx_now > 0 else "LEFT"
+            away = "LEFT" if toward == "RIGHT" else "RIGHT"
+        while pending and pending[0][0] <= frame_no:
+            _, action = pending.pop(0)
+            plan = deque(plan_for(action, toward, away))
+        if use_reflex and history and reflex_block(list(history)):
+            buttons = PAD["BL"]
+            plan.clear()
+        else:
+            buttons = plan.popleft() if plan else set()
+        obs, _, term, trunc, info = press(env, buttons)
+        read_flags(env, info)
+        history.append(info)
+        first_info = first_info or info
+        frame_no += 1
+        if frame_no % DECISION_EVERY == 0:
+            pending.append((frame_no + lag, policy_fn(list(history), rng, state_name)))
+            decisions += 1
+        if term or trunc or frame_no > 100 * FPS:
+            won = info["enemy_health"] < info["health"]
+            return {"state": state_name, "variant": arm_spec, "won": won,
+                    "seconds": round(frame_no / FPS, 1),
+                    "damage_dealt": first_info["enemy_health"] - info["enemy_health"],
+                    "damage_taken": first_info["health"] - info["health"],
+                    "decisions": decisions}
+
+
+def summarize_sim(rows):
+    arms = list(dict.fromkeys(r["variant"] for r in rows))
+    print(f"\n{'arm':<24}{'rds':>5}{'wins':>5}{'win%':>6}{'dealt':>7}{'±ci':>7}{'taken':>7}{'secs':>7}")
+    for arm in arms:
+        r = [x for x in rows if x["variant"] == arm]
+        n = len(r)
+        wins = sum(x["won"] for x in r)
+        def _ci(vals):
+            return 1.96 * statistics.stdev(vals) / len(vals) ** 0.5 if len(vals) > 1 else 0.0
+        dealt = [x["damage_dealt"] for x in r]
+        taken = [x["damage_taken"] for x in r]
+        print(f"{arm:<24}{n:>5}{wins:>5}{100*wins/n:>5.0f}%{statistics.mean(dealt):>7.1f}"
+              f"{_ci(dealt):>7.1f}{statistics.mean(taken):>7.1f}{statistics.mean([x['seconds'] for x in r]):>7.1f}")
+    # Paired net-damage comparisons per fight (mean over repeats). Net = dealt - taken.
+    print()
+    by_fight = {}
+    for x in rows:
+        by_fight.setdefault(x["state"], {}).setdefault(x["variant"], []).append(
+            x["damage_dealt"] - x["damage_taken"])
+    def _paired(a_arm, b_arm, label):
+        diffs = [statistics.mean(f[a_arm]) - statistics.mean(f[b_arm])
+                 for f in by_fight.values() if a_arm in f and b_arm in f]
+        if not diffs:
+            return
+        n, mean_d = len(diffs), statistics.mean(diffs)
+        ci = 1.96 * statistics.stdev(diffs) / n ** 0.5 if n > 1 else 0.0
+        sig = "not significant (CI crosses 0)" if mean_d - ci < 0 < mean_d + ci else (
+            "favors A" if mean_d > 0 else "favors B")
+        print(f"{label}: {a_arm} beat {b_arm} in {sum(d > 0 for d in diffs)} of {n} fights, "
+              f"mean net Δ {mean_d:+.1f} ± {ci:.1f} → {sig}")
+    _paired("random+reflex@24", "random@24", "H1 reflex")
+    _paired("script@24", "random@24", "H3 script")
+    _paired("script+reflex@24", "script@24", "H3 script+reflex")
+    _paired("random@0", "random@24", "H2 lag random 0vs24")
+    _paired("script@0", "script@24", "H2 lag script 0vs24")
+
+
+def run_sim(args, env, all_states):
+    """Headless unpaced experiment: no sleep, no web server, no Clef calls."""
+    ladder = [s for s in all_states if s.startswith(args.ladder)][: args.fights]
+    tables = {}
+    if "clef" in args.sim:
+        load_env_file()
+        clef = Clef(args.model, os.environ["CLOUDFLARE_ACCOUNT_ID"], os.environ["CLOUDFLARE_API_TOKEN"])
+        tables = {name: ClefTable(clef, args.temperature, name) for name in TABLE_PROMPTS}
+    arms = [parse_arm(a.strip(), tables) for a in args.sim.split(",") if a.strip()]
+    log = HERE / "ab" / f"sim-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+    log.parent.mkdir(exist_ok=True)
+    total = len(ladder) * args.repeats * len(arms)
+    print(f"Sim: {len(arms)} arms × {len(ladder)} fights × {args.repeats} repeats = {total} rounds. Log: {log}")
+    rows, done, t0 = [], 0, time.perf_counter()
+    for repeat in range(args.repeats):
+        for fi, state_name in enumerate(ladder):
+            for arm_spec, policy_fn, use_reflex, lag in arms:
+                rng = random.Random(f"{repeat}-{fi}")  # same seed per fight so arms see comparable randomness
+                result = sim_round(env, state_name, arm_spec, policy_fn, use_reflex, lag, rng)
+                rows.append(result)
+                with open(log, "a") as f:
+                    f.write(json.dumps(result) + "\n")
+                done += 1
+                print(f"{done}/{total} {state_name:<22} {arm_spec:<22} {'WIN ' if result['won'] else 'loss'} "
+                      f"dealt {result['damage_dealt']:>3} taken {result['damage_taken']:>3} {result['seconds']:>5}s")
+    elapsed = time.perf_counter() - t0
+    print(f"\n{done} rounds in {elapsed:.0f}s ({60 * done / elapsed:.1f} rounds/min)")
+    summarize_sim(rows)
+    if tables:
+        tokens = sum(t.tokens for t in tables.values())
+        print(f"Clef: {tokens:,} new input tokens, about "
+              f"{tokens * NEURONS_PER_M_INPUT[args.model] / 1e6:.0f} neurons (cached answers are free).")
 
 
 def load_env_file():
@@ -675,6 +935,11 @@ def main():
                    "variant, headless, log to ab/, print results")
     p.add_argument("--arms", default=",".join(VARIANTS), help="comma list of variants for A/B (default all)")
     p.add_argument("--fights", type=int, default=14, help="A/B: first N of the 14 ladder fights (saves quota)")
+    p.add_argument("--sim", metavar="ARMS", help="free unpaced test of code-only arms, e.g. "
+                   "random@0,script@24,clef@0 (arm: random, script, or clef; +reflex adds the block reflex; @N = latency frames)")
+    p.add_argument("--repeats", type=int, default=3, help="sim: rounds per fight per arm")
+    p.add_argument("--ladder", default="VeryEasy.LiuKang", help="sim: save-state prefix, e.g. LiuKangVs for the "
+                   "15 VeryHard fights (held out: prompts were tuned on VeryEasy)")
     args = p.parse_args()
     if args.rom:
         return install_rom(args.rom)
@@ -693,6 +958,8 @@ def main():
         raise SystemExit("Mortal Kombat II (Genesis) ROM not installed. Run: uv run mk2_clef.py --rom roms/<your file>.zip")
     if args.calibrate:  # Jax walks in slowly here, so each move is easy to see
         return calibrate(env, [args.state or "Level1.LiuKangVsJax"])
+    if args.sim:  # free and unpaced: no Clef, no browser, no credentials needed
+        return run_sim(args, env, all_states)
 
     load_env_file()
     account, token = os.environ.get("CLOUDFLARE_ACCOUNT_ID"), os.environ.get("CLOUDFLARE_API_TOKEN")
