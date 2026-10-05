@@ -2,7 +2,13 @@
 
 Clef-flash (Cloudflare Workers AI) plays MK2 on the Sega Genesis. It reads game memory, not pixels.
 
-Demo: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
+![Clef-flash beats the VeryHard Shang Tsung with 7 health left](recording/veryhard-win-shang-tsung.webp)
+
+First win against the VeryHard CPU (1 of 150 held-out rounds), replayed frame for frame from the sim. Clef answered 8 situation questions in one call before the round (6,008 tokens, $0.00054). Code reads game memory and plays a move from Clef's probabilities. Full quality: [`recording/veryhard-win-shang-tsung.mp4`](recording/veryhard-win-shang-tsung.mp4).
+
+Other recordings: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
+
+**Setting up with a coding agent?** Point it at [`AGENTS.md`](AGENTS.md).
 
 ## How it works
 
