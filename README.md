@@ -2,9 +2,19 @@
 
 Clef-flash (Cloudflare Workers AI) plays MK2 on the Sega Genesis. It reads game memory, not pixels.
 
-![Clef-flash beats the VeryHard Shang Tsung with 7 health left](recording/veryhard-win-shang-tsung.webp)
+![Clef-flash beats the VeryHard Shang Tsung with 12 health left](recording/veryhard-win-shang-tsung-2.webp)
 
-First win against the VeryHard CPU (1 of 150 held-out rounds), replayed frame for frame from the sim. Clef answered 8 situation questions in one call before the round (6,008 tokens, $0.00054). Code reads game memory and plays a move from Clef's probabilities. Full quality: [`recording/veryhard-win-shang-tsung.mp4`](recording/veryhard-win-shang-tsung.mp4).
+Clef-flash beats the VeryHard CPU, replayed frame for frame from the sim. Clef answered 8 situation questions in one call before the round (6,008 tokens, $0.00054). Code reads game memory and plays a move from Clef's probabilities. Full quality: [`recording/veryhard-win-shang-tsung-2.mp4`](recording/veryhard-win-shang-tsung-2.mp4).
+
+Real or luck? 200 more rounds against the same VeryHard Shang Tsung, prompt `clef4`, fresh seeds:
+
+| Arm | Wins | Damage dealt (of 120) | Rounds with 90+ damage | Closest loss |
+|---|---|---|---|---|
+| Clef v4 | 1 | **55.0 ± 3.1** | **13** | 4 health short |
+| Rules bot | 1 | 43.2 ± 2.8 | 7 | 12 short |
+| Random | 0 | 10.0 ± 2.1 | 0 | 37 short |
+
+Wins are rare (about 1 in 200), but Clef out-damages the hand-written rules bot every time we measure. The face in the corner is MK2's "Toasty!" Easter egg.
 
 Other recordings: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
 
