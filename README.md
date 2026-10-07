@@ -1,4 +1,4 @@
-# FightBench
+<p align="center"><img src="site/banner.png" alt="FightBench" width="100%"></p>
 
 A replay-verified benchmark for AI decision models. First game: Mortal Kombat II (Genesis), Liu Kang vs the CPU, played from game memory, not pixels.
 
@@ -23,7 +23,7 @@ uv run fightbench.py replay submissions/<file>.json        # maintainer: writes 
 uv run fightbench.py replay script                         # floor row, full ladder
 ```
 
-`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. Replay checks the game outcome. It does not re-call the model, so the model name is attested by the submitter. The board is `site/index.html`. After a results merge, publish it: `npx wrangler pages deploy site --project-name fightbench --branch main`.
+`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. Replay checks the game outcome. It does not re-call the model, so the model name is attested by the submitter. The board is `site/index.html`. A GitHub Action publishes it to https://fightbench.aipdv.com on every merge to `main` that changes `site/`.
 
 ## How it started: Clef-flash plays MK2
 
