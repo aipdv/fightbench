@@ -1,26 +1,12 @@
-# Clef-flash plays Mortal Kombat II
+# FightBench
 
-Clef-flash (Cloudflare Workers AI) plays MK2 on the Sega Genesis. It reads game memory, not pixels.
+A replay-verified benchmark for AI decision models. First game: Mortal Kombat II (Genesis), Liu Kang vs the CPU, played from game memory, not pixels.
 
-![Clef-flash beats the VeryHard Shang Tsung with 12 health left](recording/veryhard-win-shang-tsung-2.webp)
-
-Clef-flash beats the VeryHard CPU, replayed frame for frame from the sim. Clef answered 8 situation questions in one call before the round (6,008 tokens, $0.00054). Code reads game memory and plays a move from Clef's probabilities. Full quality: [`recording/veryhard-win-shang-tsung-2.mp4`](recording/veryhard-win-shang-tsung-2.mp4).
-
-Real or luck? (Pre-edition demo, not a FightBench score.) 200 more rounds against the same VeryHard Shang Tsung, prompt `clef4`, fresh seeds:
-
-| Arm | Wins | Damage dealt (of 120) | Rounds with 90+ damage | Closest loss |
-|---|---|---|---|---|
-| Clef v4 | 1 | **55.0 ± 3.1** | **13** | 4 health short |
-| Rules bot | 1 | 43.2 ± 2.8 | 7 | 12 short |
-| Random | 0 | 10.0 ± 2.1 | 0 | 37 short |
-
-Wins are rare (about 1 in 200), but Clef out-damages the hand-written rules bot every time we measure. The face in the corner is MK2's "Toasty!" Easter egg.
-
-Other recordings: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
+**Board:** https://fightbench.aipdv.com
 
 **Setting up with a coding agent?** Point it at [`AGENTS.md`](AGENTS.md).
 
-## FightBench (edition `mk2-liukang-v1`)
+## Edition `mk2-liukang-v1`
 
 A frozen bench on this emulator: Liu Kang vs the 15 VeryHard CPU fights, 10 repeats each. Rank is mean damage dealt. Wins are reported, not ranked.
 
@@ -37,7 +23,27 @@ uv run fightbench.py replay submissions/<file>.json        # maintainer: writes 
 uv run fightbench.py replay script                         # floor row, full ladder
 ```
 
-`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. Replay checks the game outcome. It does not re-call the model, so the model name is attested by the submitter. The board is `site/index.html`.
+`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. Replay checks the game outcome. It does not re-call the model, so the model name is attested by the submitter. The board is `site/index.html`. After a results merge, publish it: `npx wrangler pages deploy site --project-name fightbench --branch main`.
+
+## How it started: Clef-flash plays MK2
+
+Clef-flash (Cloudflare Workers AI) plays MK2 on the Sega Genesis. It reads game memory, not pixels.
+
+![Clef-flash beats the VeryHard Shang Tsung with 12 health left](recording/veryhard-win-shang-tsung-2.webp)
+
+Clef-flash beats the VeryHard CPU, replayed frame for frame from the sim. Clef answered 8 situation questions in one call before the round (6,008 tokens, $0.00054). Code reads game memory and plays a move from Clef's probabilities. Full quality: [`recording/veryhard-win-shang-tsung-2.mp4`](recording/veryhard-win-shang-tsung-2.mp4).
+
+Real or luck? (Pre-edition demo, not a FightBench score.) 200 more rounds against the same VeryHard Shang Tsung, prompt `clef4`, fresh seeds:
+
+| Arm | Wins | Damage dealt (of 120) | Rounds with 90+ damage | Closest loss |
+|---|---|---|---|---|
+| Clef v4 | 1 | **55.0 ± 3.1** | **13** | 4 health short |
+| Rules bot | 1 | 43.2 ± 2.8 | 7 | 12 short |
+| Random | 0 | 10.0 ± 2.1 | 0 | 37 short |
+
+Wins are rare (about 1 in 200), and on this one fight with the `clef4` prompt Clef out-damaged the rules bot. The frozen FightBench ladder is the fair test: see the board. The face in the corner is MK2's "Toasty!" Easter egg.
+
+Other recordings: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
 
 ## How it works
 
