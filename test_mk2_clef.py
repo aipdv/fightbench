@@ -108,6 +108,7 @@ assert situation([frame(190, 0)] * 4 + [frame(190, 0) | {"enemy_attacking": True
 # FightBench edition 1: the frozen text, the detector edges, the random control, rejection, and replay determinism.
 import json
 import math
+
 import fightbench as fb
 import mk2_clef
 from mk2_clef import TABLE_PROMPTS
@@ -310,6 +311,34 @@ with tempfile.TemporaryDirectory() as tmp:
         (fb.VERIFIED / f"{model}.jsonl").write_text(json.dumps(row) + "\n")
     fb.write_board()
     assert [r["model"] for r in json.loads(fb.BOARD.read_text())["policy_table"]] == ["better", "full", "lucky"]
-fb.VERIFIED, fb.BOARD = real
+
+# replay(): the same replay twice is accepted; a replay that differs exits and keeps the old file; bad files are rejected.
+import contextlib
+import io
+
+with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+    fb.HERE, fb.VERIFIED, fb.BOARD = Path(tmp), Path(tmp), Path(tmp) / "board.json"
+    fb.replay(FakeEnv(), "script", smoke=True)
+    fb.replay(FakeEnv(), "script", smoke=True)
+    out = fb.VERIFIED / "script__policy_table__mk2-liukang-v1__smoke.jsonl"
+    out.write_text("old\n")
+    try:
+        fb.replay(FakeEnv(), "script", smoke=True)
+        raise AssertionError("a differing replay overwrote the old file")
+    except SystemExit:
+        assert out.read_text() == "old\n"
+    sub = {"edition": fb.EDITION, "temperature": 1, "rom_sha1": fb.ED["rom_sha1"], "track": "policy_table",
+           "model": "m", "model_version": "v", "tables": smoke_table}
+    half = {m: 0.5 / 17 for m in fb.MOVE_IDS}  # sums to 0.5: rejected, never renormalized
+    for bad in (sub | {"temperature": 0.5}, sub | {"tables": {fb.LADDER[0]: {s: half for s in fb.SITUATIONS}}}):
+        path = Path(tmp) / "sub.json"
+        path.write_text(json.dumps(bad))
+        try:
+            fb.replay(FakeEnv(), str(path))
+            raise AssertionError(f"accepted {bad}")
+        except SystemExit:
+            pass
+    assert not list(fb.VERIFIED.glob("m*.jsonl"))
+fb.HERE, (fb.VERIFIED, fb.BOARD) = Path(fb.__file__).parent, real
 
 print("ok")
