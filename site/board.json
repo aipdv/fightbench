@@ -3,6 +3,48 @@
  "prompt_sha256": "30893e832b605adc3788319776454669ca753e1042a86e75dfad24b909ab8dc6",
  "policy_table": [
   {
+   "id": "script__policy_table__mk2-liukang-v1",
+   "model": "script",
+   "model_version": "harness",
+   "official": true,
+   "status": "replay-verified",
+   "mean_dealt": 31.1,
+   "ci95": 3.8,
+   "wins": 1,
+   "rounds": 150,
+   "mean_taken": 117.8,
+   "errors": 0,
+   "coverage": "150/150"
+  },
+  {
+   "id": "clef-flash--cf-cloudflare-clef-flash__policy_table__mk2-liukang-v1",
+   "model": "clef-flash",
+   "model_version": "@cf/cloudflare/clef-flash",
+   "official": true,
+   "status": "replay-verified",
+   "mean_dealt": 26.9,
+   "ci95": 3.4,
+   "wins": 0,
+   "rounds": 150,
+   "mean_taken": 118,
+   "errors": 0,
+   "coverage": "150/150"
+  },
+  {
+   "id": "random__policy_table__mk2-liukang-v1",
+   "model": "random",
+   "model_version": "harness",
+   "official": true,
+   "status": "replay-verified",
+   "mean_dealt": 16.6,
+   "ci95": 2.8,
+   "wins": 0,
+   "rounds": 150,
+   "mean_taken": 118,
+   "errors": 0,
+   "coverage": "150/150"
+  },
+  {
    "id": "random__policy_table__mk2-liukang-v1__smoke",
    "model": "random",
    "model_version": "harness",
