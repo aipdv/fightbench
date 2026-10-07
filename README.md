@@ -31,8 +31,8 @@ A frozen bench on this emulator: Liu Kang vs the 15 VeryHard CPU fights, 10 repe
 
 ```sh
 uv run fightbench.py smoke                                 # free, needs the ROM, skips without it
-uv run fightbench.py table --policy my.py:MyPolicy         # write submissions/<model>__policy_table__mk2-liukang-v1.json
-uv run fightbench.py live --policy my.py:MyPolicy          # write submissions/<model>__live__mk2-liukang-v1.json
+uv run fightbench.py table --policy my.py:MyPolicy         # write submissions/<model>--<version>__policy_table__mk2-liukang-v1.json
+uv run fightbench.py live --policy my.py:MyPolicy          # write submissions/<model>--<version>__live__mk2-liukang-v1.json
 uv run fightbench.py replay submissions/<file>.json        # maintainer: writes results/verified/ and site/board.json
 uv run fightbench.py replay script                         # floor row, full ladder
 ```

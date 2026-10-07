@@ -36,6 +36,7 @@ EDITION, SITUATIONS, MOVES, LIVE = ED["edition"], ED["situations"], ED["moves"],
 MOVE_IDS = list(MOVES)
 LADDER = [f["state"] for f in ED["ladder"]]
 PROMPT_SHA256 = hashlib.sha256(EDITION_FILE.read_bytes()).hexdigest()
+MIN_GAP_FRAMES = math.ceil(LIVE["min_gap_s"] * core.FPS)
 VERIFIED, SUBMISSIONS, BOARD = HERE / "results" / "verified", HERE / "submissions", HERE / "site" / "board.json"
 
 
@@ -97,6 +98,13 @@ def slug(text):
     return re.sub(r"[^a-z0-9.]+", "-", text.lower()).strip("-")
 
 
+def row_id(sub, smoke):
+    """<model>--<model_version>__<track>__<edition>[__smoke]. The floor rows' version 'harness' is left out."""
+    version = slug(sub.get("model_version") or "")
+    model = slug(sub["model"]) + (f"--{version}" if version not in ("", "harness") else "")
+    return f"{model}__{sub['track']}__{EDITION}{'__smoke' if smoke else ''}"
+
+
 # --- Validation: reject, never repair -------------------------------------------------------------------------------
 
 def check_dist(dist):
@@ -134,24 +142,36 @@ def check_live(sub):
     official = keys == sorted((f, n) for f in LADDER for n in range(ED["repeats"]))
     if not official and keys != [(LADDER[0], 0)]:
         raise ValueError("rounds need every fight x repeats 0..9, or only the smoke round")
-    min_gap = math.ceil(LIVE["min_gap_s"] * core.FPS)
+    def whole(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+
     for r in sub["rounds"]:
         where = f"{r['fight']} repeat {r['repeat']}"
         if r.get("fps", 0) < LIVE["min_fps"]:
             raise ValueError(f"{where}: ran at {r.get('fps')} fps, below {LIVE['min_fps']}")
-        open_, last = [], None
+        open_, last, last_apply, next_apply = [], None, -1, None
         for d in r["decisions"]:
+            if not whole(d["frame"]) or not (whole(d["done_frame"]) or d["done_frame"] is None and d["dropped"]):
+                raise ValueError(f"{where} frame {d['frame']}: frame and done_frame must be whole frame numbers")
             if d["situation"] not in SITUATIONS or (d["action"] is not None and d["action"] not in MOVES):
                 raise ValueError(f"{where} frame {d['frame']}: unknown situation or move")
-            if last is not None and d["frame"] - last < min_gap:
+            if last is not None and d["frame"] - last < MIN_GAP_FRAMES:
                 raise ValueError(f"{where} frame {d['frame']}: request starts closer than {LIVE['min_gap_s']} s")
             open_ = [f for f in open_ if f is None or f > d["frame"]]
             if len(open_) >= LIVE["max_inflight"]:
                 raise ValueError(f"{where} frame {d['frame']}: more than {LIVE['max_inflight']} requests in flight")
-            if d["action"] is not None and not d["dropped"] and not d["apply_frame"] == d["done_frame"] >= d["frame"]:
-                raise ValueError(f"{where} frame {d['frame']}: apply_frame must be the frame the answer arrived")
+            if d["action"] is not None and not d["dropped"]:
+                if not d["apply_frame"] == d["done_frame"] > d["frame"] or d["apply_frame"] < last_apply:
+                    raise ValueError(f"{where} frame {d['frame']}: apply_frame must be the frame the answer arrived, "
+                                     "after the request, and not before an older answer's apply_frame")
+                last_apply = d["apply_frame"]
             open_.append(d["done_frame"])
             last = d["frame"]
+        for d in reversed(r["decisions"]):  # the seq rule: a dropped answer arrived after a newer one was applied
+            if d["action"] is not None and not d["dropped"]:
+                next_apply = d["apply_frame"]
+            elif d["dropped"] and d["done_frame"] is not None and (next_apply is None or next_apply > d["done_frame"]):
+                raise ValueError(f"{where} frame {d['frame']}: dropped, but no newer answer was applied by then")
     return official
 
 
@@ -243,7 +263,8 @@ def play_live(env, policy, fight, rng):
                 action = sample({m: dist[m] for m in MOVE_IDS}, ED["temperature"], rng)
                 d.update(action=action, apply_frame=frame_no)
                 last_applied = seq
-        if history and now >= next_at and len(inflight) < LIVE["max_inflight"]:
+        if (history and now >= next_at and len(inflight) < LIVE["max_inflight"]
+                and (not decisions or frame_no - decisions[-1]["frame"] >= MIN_GAP_FRAMES)):
             sit = situation(history)
             decisions.append({"frame": frame_no, "situation": sit, "action": None, "latency_ms": None,
                               "dropped": False, "apply_frame": None, "done_frame": None})
@@ -267,11 +288,16 @@ def replay_live_round(env, fight, decisions):
             applies.setdefault(d["apply_frame"], []).append(d["action"])
 
     def on_frame(frame_no, history):
-        if frame_no in sends and (not history or situation(history) != sends[frame_no]):
-            raise ValueError(f"{fight} frame {frame_no}: logged situation {sends[frame_no]!r} does not match the game")
-        return applies.get(frame_no, [None])[-1]  # two answers on one frame: the newer one wins, as in play
+        if frame_no in sends:
+            sit = sends.pop(frame_no)
+            if not history or situation(history) != sit:
+                raise ValueError(f"{fight} frame {frame_no}: logged situation {sit!r} does not match the game")
+        return applies.pop(frame_no, [None])[-1]  # two answers on one frame: the newer one wins, as in play
 
-    return live_round(env, fight, on_frame) | {"decisions": decisions}
+    r = live_round(env, fight, on_frame)
+    if sends or applies:
+        raise ValueError(f"{fight} frame {min([*sends, *applies])}: the replayed round ended before this frame")
+    return r | {"decisions": decisions}
 
 
 # --- Commands --------------------------------------------------------------------------------------------------------
@@ -298,10 +324,10 @@ def open_env():
 
 
 def submission(policy, track, smoke, **fields):
-    SUBMISSIONS.mkdir(exist_ok=True)
-    path = SUBMISSIONS / f"{slug(policy.name)}__{track}__{EDITION}{'__smoke' if smoke else ''}.json"
     sub = {"edition": EDITION, "track": track, "model": policy.name, "model_version": policy.version,
            "temperature": ED["temperature"], "rom_sha1": ED["rom_sha1"]} | fields
+    SUBMISSIONS.mkdir(exist_ok=True)
+    path = SUBMISSIONS / f"{row_id(sub, smoke)}.json"
     path.write_text(json.dumps(sub, indent=1) + "\n")
     print(f"Wrote {path.relative_to(HERE)}. Commit only this file on a branch and open a pull request.")
 
@@ -346,7 +372,7 @@ def replay(env, target, smoke=False):
                 raise ValueError("track must be policy_table or live")
         except (ValueError, KeyError, TypeError) as e:
             raise SystemExit(f"{target}: rejected. {e}")
-    rid = f"{slug(sub['model'])}__{sub['track']}__{EDITION}{'' if official else '__smoke'}"
+    rid = row_id(sub, not official)
     keep = {k: sub[k] for k in ("edition", "track", "model", "model_version")} | {"official": official}
     rows = []
     if sub["track"] == "policy_table":
@@ -395,7 +421,7 @@ def write_board():
         rows = [json.loads(line) for line in path.read_text().splitlines()]
         board[rows[0]["track"]].append(board_row(path.stem, rows))
     for track in ("policy_table", "live"):
-        board[track].sort(key=lambda r: -r["mean_dealt"])
+        board[track].sort(key=lambda r: (not r["official"], -r["mean_dealt"]))
     BOARD.parent.mkdir(exist_ok=True)
     BOARD.write_text(json.dumps(board, indent=1) + "\n")
 
@@ -405,7 +431,7 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("smoke", help="script and random on fight 0, repeat 0, twice. Skips without a ROM.")
     for name in ("table", "live"):
-        s = sub.add_parser(name, help=f"run a model, write submissions/<model>__{name}__{EDITION}.json")
+        s = sub.add_parser(name, help=f"run a model, write submissions/<model>--<version>__{name}__{EDITION}.json")
         s.add_argument("--policy", required=True, help="'clef' or path/to/file.py:ClassName (a Policy)")
         s.add_argument("--smoke", action="store_true", help="fight 0, repeat 0 only")
     s = sub.add_parser("replay", help="score a submission file, or 'script' / 'random'")

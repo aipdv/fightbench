@@ -153,7 +153,19 @@ assert [situation(dx(d)) for d in (59, 60, 79, 80, 100, 101, 150, 151)] == [
     "point_blank", "close", "close", "mid", "mid", "far", "far", "full_screen"]
 assert situation(dx(149, ey=-1)) == "enemy_jump" and situation(dx(150, ey=-1)) == "far"
 assert situation(dx(100, atk=True)) == "close_attack" and situation(dx(101, atk=True)) == "far_attack"
-assert mk2_clef._ENEMY_ATK_ADDR == 16758523 and mk2_clef._ATK_FLAGS == {240, 244, 246, 250, 252}
+
+# read_flags: the enemy attack flag is the byte at 0xFFB6FB in byte-swapped Genesis RAM.
+class RamEnv:
+    def __init__(self, enemy_flag):
+        self.unwrapped, self.ram = self, bytearray(0x10000)
+        self.ram[0xB6FB ^ 1] = enemy_flag
+    def get_ram(self):
+        return self.ram
+
+for flag, attacking in ((240, True), (252, True), (0, False), (241, False)):
+    info = {}
+    mk2_clef.read_flags(RamEnv(flag), info)
+    assert info == {"enemy_attacking": attacking, "me_attacking": False}, (flag, info)
 
 # Official random picks from the 17 edition moves, not the old 13-move ACTIONS.
 _rng = fb.seeded(0, 0)
@@ -198,12 +210,106 @@ skewed = {m: (0.5 if m == "low_kick" else 0.5 / 16) for m in fb.MOVE_IDS}
 table = fb.table_policy({fb.LADDER[0]: {s: skewed for s in fb.SITUATIONS}})
 a, b = (fb.table_round(FakeEnv(), fb.LADDER[0], table, fb.seeded(0, 0)) for _ in range(2))
 assert a == b and a["damage_dealt"] > 0 and len(a["decisions"]) == 60, a["damage_dealt"]
-live_log = [{"frame": d["frame"], "situation": d["situation"], "action": d["action"], "latency_ms": 100,
+full_log = [{"frame": d["frame"], "situation": d["situation"], "action": d["action"], "latency_ms": 100,
              "dropped": False, "apply_frame": d["frame"] + 6, "done_frame": d["frame"] + 6} for d in a["decisions"]]
-fb.check_live({"interval_s": 0.12, "max_inflight": 3,
-               "rounds": [{"fight": fb.LADDER[0], "repeat": 0, "fps": 60, "decisions": live_log}]})
+live_log = full_log[:-1]  # the last decision is at frame 900, after the fake round ends
+
+
+def live_sub(decisions, fps=60):
+    return {"interval_s": 0.12, "max_inflight": 3,
+            "rounds": [{"fight": fb.LADDER[0], "repeat": 0, "fps": fps, "decisions": decisions}]}
+
+
+def rejects(fn, *args):
+    try:
+        fn(*args)
+    except ValueError:
+        return True
+    return False
+
+
+fb.check_live(live_sub(live_log))
 c, d = (fb.replay_live_round(FakeEnv(), fb.LADDER[0], live_log) for _ in range(2))
 c.pop("fps"), d.pop("fps")
 assert c == d and c["damage_dealt"] > 0, c
+assert rejects(fb.replay_live_round, FakeEnv(), fb.LADDER[0], full_log)  # a request the replayed round never reached
+
+# Live logs the runner cannot write are rejected: odd frames, zero latency, out-of-order applies, and bad drops.
+d0, d1 = live_log[:2]  # requests at frames 15 and 30, answers applied at 21 and 36
+late_drop = live_log[:]
+late_drop[0] = d0 | {"action": None, "dropped": True, "apply_frame": None, "done_frame": 40}
+fb.check_live(live_sub(late_drop))  # it arrived after the newer answer was applied at 36
+for bad in ([d0 | {"frame": 15.0}] + live_log[1:],
+            [d0 | {"action": None, "apply_frame": None, "done_frame": None}] + live_log[1:],
+            [d0 | {"apply_frame": 15, "done_frame": 15}] + live_log[1:],
+            [d0 | {"apply_frame": 40, "done_frame": 40}] + live_log[1:],
+            [late_drop[0] | {"done_frame": 22}] + live_log[1:]):
+    assert rejects(fb.check_live, live_sub(bad)), bad[0]
+
+# play_live with a 2 s stall on a fake clock. The runner must still write a log that check_live and replay accept.
+from concurrent.futures import Future
+
+
+class Clock:
+    t = 0.0
+    def perf_counter(self):
+        return self.t
+    def sleep(self, s):
+        self.t += s
+
+
+class SyncPool:  # every answer arrives on the next frame, so the log is the same on every run
+    def __init__(self, workers):
+        pass
+    def submit(self, fn, *args):
+        f = Future()
+        f.set_result(fn(*args))
+        return f
+    def shutdown(self, **kw):
+        pass
+
+
+class Uniform(fb.Policy):
+    def distributions(self, fight_id, state_line, situations, moves):
+        return {s: uniform for s in situations}
+
+
+def stalling_press(env, buttons):
+    clock.t += 0.2 if 100 <= env.f < 110 else 0
+    return fake_press(env, buttons)
+
+
+clock, real = Clock(), (fb.time, fb.ThreadPoolExecutor)
+fb.time, fb.ThreadPoolExecutor, mk2_clef.press = clock, SyncPool, stalling_press
+played = fb.play_live(FakeEnv(), Uniform(), fb.LADDER[0], fb.seeded(0, 0))
+(fb.time, fb.ThreadPoolExecutor), mk2_clef.press = real, fake_press
+fb.check_live(live_sub(played["decisions"], played["fps"]))
+assert fb.replay_live_round(FakeEnv(), fb.LADDER[0], played["decisions"])["damage_dealt"] == played["damage_dealt"]
+
+# Row ids and submission names carry the model version. Floor rows ('harness') do not.
+clef = {"model": "clef-flash", "model_version": "@cf/cloudflare/clef-flash", "track": "policy_table"}
+assert fb.row_id(clef, False) == "clef-flash--cf-cloudflare-clef-flash__policy_table__mk2-liukang-v1"
+assert fb.row_id(clef | {"model_version": "v2"}, False) != fb.row_id(clef, False)
+assert fb.row_id({"model": "script", "model_version": "harness", "track": "policy_table"}, True) == (
+    "script__policy_table__mk2-liukang-v1__smoke")
+for path in fb.SUBMISSIONS.glob("*.json"):  # each committed submission has the name its replayed row gets
+    sub = json.loads(path.read_text())
+    official = fb.check_tables(sub["tables"]) if sub["track"] == "policy_table" else fb.check_live(sub)
+    assert path.stem == fb.row_id(sub, not official), path.name
+
+# The board puts official rows above smoke rows, then sorts by mean damage dealt.
+import tempfile
+from pathlib import Path
+
+real = fb.VERIFIED, fb.BOARD
+with tempfile.TemporaryDirectory() as tmp:
+    fb.VERIFIED, fb.BOARD = Path(tmp), Path(tmp) / "board.json"
+    base = {"track": "policy_table", "model_version": "v", "won": False, "damage_taken": 0, "decisions": []}
+    for model, official, dealt in (("lucky", False, 90), ("full", True, 10), ("better", True, 30)):
+        row = base | {"model": model, "official": official, "damage_dealt": dealt}
+        (fb.VERIFIED / f"{model}.jsonl").write_text(json.dumps(row) + "\n")
+    fb.write_board()
+    assert [r["model"] for r in json.loads(fb.BOARD.read_text())["policy_table"]] == ["better", "full", "lucky"]
+fb.VERIFIED, fb.BOARD = real
 
 print("ok")
