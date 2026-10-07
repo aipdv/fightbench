@@ -431,7 +431,8 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("smoke", help="script and random on fight 0, repeat 0, twice. Skips without a ROM.")
     for name in ("table", "live"):
-        s = sub.add_parser(name, help=f"run a model, write submissions/<model>--<version>__{name}__{EDITION}.json")
+        track = "policy_table" if name == "table" else name
+        s = sub.add_parser(name, help=f"run a model, write submissions/<model>--<version>__{track}__{EDITION}.json")
         s.add_argument("--policy", required=True, help="'clef' or path/to/file.py:ClassName (a Policy)")
         s.add_argument("--smoke", action="store_true", help="fight 0, repeat 0 only")
     s = sub.add_parser("replay", help="score a submission file, or 'script' / 'random'")
