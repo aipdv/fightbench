@@ -6,7 +6,7 @@ Clef-flash (Cloudflare Workers AI) plays MK2 on the Sega Genesis. It reads game 
 
 Clef-flash beats the VeryHard CPU, replayed frame for frame from the sim. Clef answered 8 situation questions in one call before the round (6,008 tokens, $0.00054). Code reads game memory and plays a move from Clef's probabilities. Full quality: [`recording/veryhard-win-shang-tsung-2.mp4`](recording/veryhard-win-shang-tsung-2.mp4).
 
-Real or luck? 200 more rounds against the same VeryHard Shang Tsung, prompt `clef4`, fresh seeds:
+Real or luck? (Pre-edition demo, not a FightBench score.) 200 more rounds against the same VeryHard Shang Tsung, prompt `clef4`, fresh seeds:
 
 | Arm | Wins | Damage dealt (of 120) | Rounds with 90+ damage | Closest loss |
 |---|---|---|---|---|
@@ -19,6 +19,25 @@ Wins are rare (about 1 in 200), but Clef out-damages the hand-written rules bot 
 Other recordings: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
 
 **Setting up with a coding agent?** Point it at [`AGENTS.md`](AGENTS.md).
+
+## FightBench (edition `mk2-liukang-v1`)
+
+A frozen bench on this emulator: Liu Kang vs the 15 VeryHard CPU fights, 10 repeats each. Rank is mean damage dealt. Wins are reported, not ranked.
+
+- **Edition:** `edition/mk2-liukang-v1.json` holds the 8 situations, 17 moves, ladder, ROM and state SHA-1s, and seed rule. It is the `clef2` prompt, word for word. A changed string is a new edition.
+- **Policy Table (headline):** the model answers all 8 situations once per fight, before play. The harness samples at temperature 1, seed `mk2-liukang-v1|repeat|fight`, every 15 frames.
+- **Live:** the model answers the current situation every 0.12 s, at most 3 in flight. Replay presses the logged actions and checks each logged situation against the game. Latency is self-reported.
+- **Floor rows:** `script` (rules bot) and `random` (17 moves).
+
+```sh
+uv run fightbench.py smoke                                 # free, needs the ROM, skips without it
+uv run fightbench.py table --policy my.py:MyPolicy         # write submissions/<model>__policy_table__mk2-liukang-v1.json
+uv run fightbench.py live --policy my.py:MyPolicy          # write submissions/<model>__live__mk2-liukang-v1.json
+uv run fightbench.py replay submissions/<file>.json        # maintainer: writes results/verified/ and site/board.json
+uv run fightbench.py replay script                         # floor row, full ladder
+```
+
+`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. Replay checks the game outcome. It does not re-call the model, so the model name is attested by the submitter. The board is `site/index.html`.
 
 ## How it works
 
@@ -82,7 +101,7 @@ Plays each of the 14 VeryEasy Liu Kang fights (Rayden to Shao Kahn) once per var
 
 **Clef table arms** (`clef`, `clef2`, `clef3`, `clef4`, prompts in `TABLE_PROMPTS`). Clef answers one `choice` question per situation (enemy jumps, enemy attacks close, 60 to 80 px, and so on) for each opponent. Code only detects the situation each frame and samples Clef's answer for it. Answers are cached in `ab/clef-cache.json`, so play has no model delay and repeats are free. A new prompt costs about 500 neurons for 14 opponents. Use `--temperature 1` (Clef's raw distribution): it beat 0 and 0.3, because the CPU punishes predictable play.
 
-Results (2026-10-05, 10 repeats):
+Pre-edition experiments, not FightBench scores (2026-10-05, 10 repeats, different seeds and sampler setup):
 
 | Arm | VeryEasy wins / 140 | dealt | VeryHard (held out) wins / 150 | dealt |
 |---|---|---|---|---|

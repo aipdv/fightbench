@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FightBench</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; color: #111; }
+  h1 { margin-bottom: 0; }
+  .sub { color: #555; margin-top: .25rem; }
+  code { background: #f2f2f2; padding: 0 .25rem; border-radius: 3px; overflow-wrap: anywhere; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: .35rem .6rem; border-bottom: 1px solid #ddd; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: .85rem; color: #555; }
+  tr.official td:first-child { font-weight: 600; }
+  tr.floor td { background: #f6f6f6; }
+  tr.smoke td { color: #777; font-style: italic; }
+  .tag { font-size: .75rem; border: 1px solid #aaa; border-radius: 3px; padding: 0 .3rem; margin-left: .3rem; font-style: normal; }
+  .empty { color: #777; }
+</style>
+</head>
+<body>
+<h1>FightBench</h1>
+<p class="sub">First game: Mortal Kombat II (Genesis), Liu Kang vs the CPU. Models read game memory, not pixels.</p>
+<p>Edition <code id="edition">mk2-liukang-v1</code>. Prompt hash (SHA-256 of the edition file): <code id="hash">loading</code></p>
+
+<h2>Policy Table</h2>
+<p>The model answers 8 situation questions once per fight, before play. Rank: mean damage dealt on the 15-fight VeryHard ladder, 10 repeats. Latency: n/a.</p>
+<div id="policy_table"></div>
+
+<h2>Live</h2>
+<p>The model answers the current situation every 0.12 s, at most 3 requests in flight. Rank: replayed mean damage dealt. Latency is <strong>self-reported</strong> and is not a rank key.</p>
+<div id="live"></div>
+
+<h2>Method</h2>
+<ul>
+  <li>Same save states, same 17 moves, same prompt, same seeds for every row.</li>
+  <li>Rank is mean damage dealt, high to low. Wins are reported. Wins are not the sort key.</li>
+  <li><code>script</code> is the rules-bot floor row. <code>random</code> picks uniformly from the 17 moves.</li>
+  <li>A different prompt, model version, temperature, or track is a different row.</li>
+  <li>Replay checks the game outcome. It does not re-call the model. The model name is attested by the submitter.</li>
+  <li>Smoke rows (one fight, one round) are shown in grey. One fight is not the ladder.</li>
+</ul>
+
+<h2>Submit</h2>
+<ol>
+  <li>Install your own ROM: <code>uv run mk2_clef.py --rom &lt;your file&gt;</code>. Nobody ships a ROM.</li>
+  <li>Write a <code>Policy</code> class (see <code>fightbench.py</code>).</li>
+  <li>Policy Table: <code>uv run fightbench.py table --policy my.py:MyPolicy</code>. Live: <code>uv run fightbench.py live --policy my.py:MyPolicy</code>.</li>
+  <li>Commit only the file in <code>submissions/</code> on a branch and open a pull request.</li>
+  <li>The maintainer runs <code>uv run fightbench.py replay submissions/&lt;file&gt;.json</code>. Only replayed results reach this board.</li>
+</ol>
+<p>Code: <a href="https://github.com/aipdv/mk2-clef">github.com/aipdv/mk2-clef</a></p>
+
+<script>
+const COLS = [
+  ["Model", r => r.model],
+  ["Mean dealt", r => r.mean_dealt.toFixed(1) + (r.ci95 == null ? "" : " ± " + r.ci95.toFixed(1))],
+  ["Wins", r => r.wins], ["Rounds", r => r.rounds], ["Mean taken", r => r.mean_taken.toFixed(1)],
+  ["Errors", r => r.errors], ["Coverage", r => r.coverage], ["Status", r => r.status],
+];
+const LIVE_COLS = [["p50 ms (self-reported)", r => r.p50_ms_self_reported ?? "n/a"],
+                   ["p95 ms (self-reported)", r => r.p95_ms_self_reported ?? "n/a"]];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+function render(id, rows, cols) {
+  const el = document.getElementById(id);
+  if (!rows.length) { el.innerHTML = '<p class="empty">No replayed results yet.</p>'; return; }
+  const head = cols.map(([h]) => `<th>${h}</th>`).join("");
+  const body = rows.map(r => {
+    const cls = [r.official ? "official" : "smoke", r.model === "script" ? "floor" : ""].join(" ");
+    // Model names come from submissions: escape every value, then add the smoke tag.
+    const cells = cols.map(([, f], i) => `<td>${i === 0 ? esc(r.model) + (r.official ? "" : '<span class="tag">smoke</span>') : esc(f(r))}</td>`);
+    return `<tr class="${cls}">${cells.join("")}</tr>`;
+  }).join("");
+  el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+fetch("board.json").then(r => r.json()).then(b => {
+  document.getElementById("edition").textContent = b.edition;
+  document.getElementById("hash").textContent = b.prompt_sha256;
+  render("policy_table", b.policy_table, COLS);
+  render("live", b.live, COLS.concat(LIVE_COLS));
+});
+</script>
+</body>
+</html>

@@ -94,7 +94,6 @@ assert policy_fn is script_policy, "parse_arm: policy"
 assert use_reflex is True, "parse_arm: reflex"
 assert lag == 12, "parse_arm: lag"
 
-print("ok")
 
 # Situation detection for the Clef arm: jump beats everything near, then attack, then distance.
 from mk2_clef import situation
@@ -105,3 +104,106 @@ assert situation([frame(190, 0)] * 5) == "mid"
 assert situation([frame(240, 0)] * 5) == "far"
 assert situation([frame(300, 0)] * 5) == "full_screen"
 assert situation([frame(190, 0)] * 4 + [frame(190, 0) | {"enemy_attacking": True}]) == "close_attack"
+
+# FightBench edition 1: the frozen text, the detector edges, the random control, rejection, and replay determinism.
+import json
+import math
+import fightbench as fb
+import mk2_clef
+from mk2_clef import TABLE_PROMPTS
+
+EDITION_SITUATIONS = {
+    "enemy_jump": "The enemy is in the air, less than 150 px away.",
+    "close_attack": "The enemy is attacking, less than 100 px away.",
+    "far_attack": "The enemy is attacking from more than 100 px away, maybe with a projectile.",
+    "point_blank": "The enemy is less than 60 px away and not attacking.",
+    "close": "The enemy is 60 to 80 px away and not attacking.",
+    "mid": "The enemy is 80 to 100 px away and not attacking.",
+    "far": "The enemy is 100 to 150 px away and not attacking.",
+    "full_screen": "The enemy is more than 150 px away and not attacking.",
+}
+EDITION_MOVES = [
+    ("approach", "Walk toward the enemy."),
+    ("retreat", "Walk away from the enemy."),
+    ("jump_in", "Jump toward the enemy. Easy to punish if the enemy is ready."),
+    ("jump_back", "Jump away from the enemy."),
+    ("block", "Stand and block. Stops high and mid attacks."),
+    ("crouch_block", "Crouch and block. Stops low attacks."),
+    ("duck", "Crouch without blocking. High projectiles fly over you."),
+    ("high_punch", "Fast high punch. Reach 70 px. Under 50 px it becomes a throw, which beats blocking."),
+    ("low_punch", "Fast low punch. Reach 70 px."),
+    ("high_kick", "High kick. Reach 79 px."),
+    ("low_kick", "Low kick. Reach 90 px."),
+    ("uppercut", "Crouching uppercut. Reach 70 px. Big damage, beats a jump-in."),
+    ("sweep", "Back + low kick. Reach 94 px. Knocks the enemy down."),
+    ("roundhouse", "Back + high kick. Reach 75 px. Knocks the enemy away."),
+    ("fireball_high", "High fireball. Hits at any distance. 17 damage."),
+    ("fireball_low", "Low fireball. Hits at any distance. 17 damage."),
+    ("flying_kick", "Flying kick. Crosses 100 to 150 px fast. 20 damage."),
+]
+assert fb.SITUATIONS == EDITION_SITUATIONS == TABLE_PROMPTS["clef2"][0]
+assert list(fb.MOVES.items()) == EDITION_MOVES == list(TABLE_PROMPTS["clef2"][1].items())
+assert fb.state_line("LiuKangVsBaraka_VeryHard_01") == "You are LiuKang. The CPU is Baraka."
+assert len(fb.LADDER) == 15 and fb.LADDER[-1] == "LiuKangVsShaoKahn_VeryHard_15"
+
+# situation() edges. frame(ex, ey) puts the player at x = 100, so dx = ex - 100.
+def dx(d, ey=0, atk=False):
+    return [frame(100 + d, 0)] * 4 + [frame(100 + d, ey) | {"enemy_attacking": atk}]
+assert [situation(dx(d)) for d in (59, 60, 79, 80, 100, 101, 150, 151)] == [
+    "point_blank", "close", "close", "mid", "mid", "far", "far", "full_screen"]
+assert situation(dx(149, ey=-1)) == "enemy_jump" and situation(dx(150, ey=-1)) == "far"
+assert situation(dx(100, atk=True)) == "close_attack" and situation(dx(101, atk=True)) == "far_attack"
+assert mk2_clef._ENEMY_ATK_ADDR == 16758523 and mk2_clef._ATK_FLAGS == {240, 244, 246, 250, 252}
+
+# Official random picks from the 17 edition moves, not the old 13-move ACTIONS.
+_rng = fb.seeded(0, 0)
+assert {fb.random_policy([], _rng) for _ in range(2000)} == set(fb.MOVE_IDS)
+
+# A table that sums wrong, misses a move, or has a negative value is rejected. Nothing is renormalized.
+uniform = {m: 1 / 17 for m in fb.MOVE_IDS}
+fb.check_dist(uniform)
+for bad in ({**uniform, "block": 0.5}, {k: v for k, v in uniform.items() if k != "duck"},
+            {**uniform, "block": -1 / 17, "duck": 3 / 17}, {**uniform, "block": math.nan}):
+    try:
+        fb.check_dist(bad)
+        raise AssertionError(f"accepted {bad}")
+    except ValueError:
+        pass
+smoke_table = {fb.LADDER[0]: {s: uniform for s in fb.SITUATIONS}}
+assert fb.check_tables(smoke_table) is False
+try:
+    fb.check_tables({fb.LADDER[0]: {"close": uniform}})  # policy-table files need all 8 situations
+    raise AssertionError("accepted a table with 1 situation")
+except ValueError:
+    pass
+
+# Replay with a fake emulator: the same table or action log gives the same result twice. No ROM needed.
+class FakeEnv:
+    def load_state(self, name, inttype=None):
+        self.f, self.me, self.enemy, self.ex = 0, 120, 120, 300
+    def reset(self):
+        pass
+
+def fake_press(env, buttons):
+    env.f += 1
+    env.ex = max(130, env.ex - 2)
+    env.enemy -= ("A" in buttons or "B" in buttons) and env.f % 7 == 0
+    env.me -= env.f % 23 == 0
+    info = {"x_position": 100, "enemy_x_position": env.ex, "y_position": 0, "enemy_y_position": 0,
+            "health": env.me, "enemy_health": env.enemy}
+    return None, 0, env.f >= 900, False, info
+
+mk2_clef.press, mk2_clef.read_flags = fake_press, lambda env, info: info.update(enemy_attacking=env.f % 40 < 3)
+skewed = {m: (0.5 if m == "low_kick" else 0.5 / 16) for m in fb.MOVE_IDS}
+table = fb.table_policy({fb.LADDER[0]: {s: skewed for s in fb.SITUATIONS}})
+a, b = (fb.table_round(FakeEnv(), fb.LADDER[0], table, fb.seeded(0, 0)) for _ in range(2))
+assert a == b and a["damage_dealt"] > 0 and len(a["decisions"]) == 60, a["damage_dealt"]
+live_log = [{"frame": d["frame"], "situation": d["situation"], "action": d["action"], "latency_ms": 100,
+             "dropped": False, "apply_frame": d["frame"] + 6, "done_frame": d["frame"] + 6} for d in a["decisions"]]
+fb.check_live({"interval_s": 0.12, "max_inflight": 3,
+               "rounds": [{"fight": fb.LADDER[0], "repeat": 0, "fps": 60, "decisions": live_log}]})
+c, d = (fb.replay_live_round(FakeEnv(), fb.LADDER[0], live_log) for _ in range(2))
+c.pop("fps"), d.pop("fps")
+assert c == d and c["damage_dealt"] > 0, c
+
+print("ok")

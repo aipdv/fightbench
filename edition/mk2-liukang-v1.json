@@ -1,0 +1,111 @@
+{
+  "edition": "mk2-liukang-v1",
+  "game": "Mortal Kombat II (Genesis), Liu Kang vs the CPU",
+  "rom_sha1": "1c74ea1190d86fcbb27038574288a3313bb0adec",
+  "stable_retro": "1.0.1",
+  "state_line": "You are {player}. The CPU is {cpu}.",
+  "question": "{situation} Which move do you use?",
+  "situations": {
+    "enemy_jump": "The enemy is in the air, less than 150 px away.",
+    "close_attack": "The enemy is attacking, less than 100 px away.",
+    "far_attack": "The enemy is attacking from more than 100 px away, maybe with a projectile.",
+    "point_blank": "The enemy is less than 60 px away and not attacking.",
+    "close": "The enemy is 60 to 80 px away and not attacking.",
+    "mid": "The enemy is 80 to 100 px away and not attacking.",
+    "far": "The enemy is 100 to 150 px away and not attacking.",
+    "full_screen": "The enemy is more than 150 px away and not attacking."
+  },
+  "moves": {
+    "approach": "Walk toward the enemy.",
+    "retreat": "Walk away from the enemy.",
+    "jump_in": "Jump toward the enemy. Easy to punish if the enemy is ready.",
+    "jump_back": "Jump away from the enemy.",
+    "block": "Stand and block. Stops high and mid attacks.",
+    "crouch_block": "Crouch and block. Stops low attacks.",
+    "duck": "Crouch without blocking. High projectiles fly over you.",
+    "high_punch": "Fast high punch. Reach 70 px. Under 50 px it becomes a throw, which beats blocking.",
+    "low_punch": "Fast low punch. Reach 70 px.",
+    "high_kick": "High kick. Reach 79 px.",
+    "low_kick": "Low kick. Reach 90 px.",
+    "uppercut": "Crouching uppercut. Reach 70 px. Big damage, beats a jump-in.",
+    "sweep": "Back + low kick. Reach 94 px. Knocks the enemy down.",
+    "roundhouse": "Back + high kick. Reach 75 px. Knocks the enemy away.",
+    "fireball_high": "High fireball. Hits at any distance. 17 damage.",
+    "fireball_low": "Low fireball. Hits at any distance. 17 damage.",
+    "flying_kick": "Flying kick. Crosses 100 to 150 px fast. 20 damage."
+  },
+  "ladder": [
+    {
+      "state": "LiuKangVsBaraka_VeryHard_01",
+      "sha1": "3ae9b3e3e395dc12427eac28f1760a8d8217aed0"
+    },
+    {
+      "state": "LiuKangVsReptile_VeryHard_02",
+      "sha1": "3af6d6062daa0ac3a994d73201b512b0ce902191"
+    },
+    {
+      "state": "LiuKangVsJax_VeryHard_03",
+      "sha1": "c5c668fdef036bfe2322f3cf0b7b0e7a253940f2"
+    },
+    {
+      "state": "LiuKangVsRayden_VeryHard_04",
+      "sha1": "38086d1ff96ae4c79d79abd314f4d85242b6c153"
+    },
+    {
+      "state": "LiuKangVsKitana_VeryHard_05",
+      "sha1": "59094bd1e3452dd276c8bc4fba26238fb189fee6"
+    },
+    {
+      "state": "LiuKangVsLiuKang_VeryHard_06",
+      "sha1": "86290d87ea7ee65564b26d4b874772bf2bcd3f8b"
+    },
+    {
+      "state": "LiuKangVsSubZero_VeryHard_07",
+      "sha1": "978f8fbbeabf06f61ddacc1de50afc89254a49bb"
+    },
+    {
+      "state": "LiuKangVsMileena_VeryHard_08",
+      "sha1": "29d22226da8616a17c4b5f8c7f55595f0d2030e3"
+    },
+    {
+      "state": "LiuKangVsCage_VeryHard_09",
+      "sha1": "3688c10f1ed2a739c3380d949cb9fd116c1f1711"
+    },
+    {
+      "state": "LiuKangVsKungLao_VeryHard_10",
+      "sha1": "054d682288dd6c757e1bb4e2bdd97cfec8c16b8f"
+    },
+    {
+      "state": "LiuKangVsScorpion_VeryHard_11",
+      "sha1": "81afbb3b74e0b535fe0fccb4a05686e5ffe36ab8"
+    },
+    {
+      "state": "LiuKangVsJade_VeryHard_12",
+      "sha1": "7459760389e6b8480e4d970d7e19c0f7d041f647"
+    },
+    {
+      "state": "LiuKangVsShangTsung_VeryHard_13",
+      "sha1": "d7115dbb87a5a0d7a75a3924b07f51105ce942bf"
+    },
+    {
+      "state": "LiuKangVsKintaro_VeryHard_14",
+      "sha1": "3385f2ccbd022879ee28e4e1a47cd27590ee9e08"
+    },
+    {
+      "state": "LiuKangVsShaoKahn_VeryHard_15",
+      "sha1": "3e6a438ce97f03030f0bd298c3a429b2dcc1508e"
+    }
+  ],
+  "repeats": 10,
+  "seed": "mk2-liukang-v1|{repeat}|{fight_index}",
+  "temperature": 1,
+  "decision_every_frames": 15,
+  "lag_frames": 0,
+  "max_frames": 6000,
+  "live": {
+    "interval_s": 0.12,
+    "min_gap_s": 0.1,
+    "max_inflight": 3,
+    "min_fps": 58
+  }
+}
