@@ -1,0 +1,31 @@
+name: Deploy board
+
+# Publishes site/ to the Cloudflare Pages project "fightbench" (https://fightbench.aipdv.com).
+# Merges to main go to production. Pull requests from this repo get a preview URL.
+on:
+  push:
+    branches: [main]
+    paths: [site/**, .github/workflows/deploy-site.yml]
+  pull_request:
+    paths: [site/**, .github/workflows/deploy-site.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-board-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Fork PRs get no secrets, so they skip the preview.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name fightbench --branch ${{ github.head_ref || github.ref_name }}
