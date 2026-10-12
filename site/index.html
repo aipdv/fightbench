@@ -27,7 +27,7 @@
   .hero { text-align: center; margin: 22px auto 26px; max-width: 760px; }
   .hero p { margin: 0; font-size: 19px; }
   .meta { font: 12px var(--mono); color: var(--muted); margin-top: 10px; overflow-wrap: anywhere; }
-  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 40px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 40px; }
   .tile { background: var(--surface); border: 2px solid var(--edge); border-radius: 10px; padding: 14px 16px; box-shadow: 4px 4px 0 var(--edge); min-width: 0; }
   .tile.key { background: var(--fire); color: var(--edge); }
   .tile b { display: block; font: 17px/1.4 var(--pixel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -46,7 +46,8 @@
   td.model { font-weight: 600; font-size: 14px; }
   td.model small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
   tr.floor td { color: var(--soft); }
-  tr.smoke td { color: var(--muted); font-style: italic; }
+  .baselines { margin: 10px 4px 0; font: 13px var(--mono); color: var(--soft); }
+  details { margin-top: 10px; } summary { cursor: pointer; font: 12px var(--mono); color: var(--soft); margin-bottom: 8px; }
   .rank { font: 12px var(--pixel); color: var(--fire); }
   .tag { font: 10px var(--mono); border: 1px solid var(--muted); border-radius: 3px; padding: 0 4px; margin-left: 6px; font-style: normal; font-weight: 400; color: var(--soft); }
   .bar { display: flex; align-items: center; gap: 8px; min-width: 170px; }
@@ -65,7 +66,7 @@
   pre { font: 13px/1.6 var(--mono); background: var(--edge); padding: 12px 14px; border-radius: 6px; overflow-x: auto; }
   .empty { color: var(--muted); padding: 10px 14px; margin: 0; font: 13px var(--mono); }
   footer { margin-top: 50px; text-align: center; font: 12px var(--mono); color: var(--muted); }
-  @media (max-width: 860px) { .tiles { grid-template-columns: repeat(2, 1fr); } .clip, .cols { grid-template-columns: 1fr; } }
+  @media (max-width: 860px) { .tiles { grid-template-columns: 1fr; } .clip, .cols { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -88,6 +89,8 @@
   <div class="head"><h2>Policy Table</h2>
     <p>The model answers 8 situation questions once per fight, before play. Rank: mean damage dealt (of 120) over 15 fights x 10 repeats. Cost and call latency are self-reported.</p></div>
   <div class="panel" id="policy_table"></div>
+  <p class="baselines" id="policy_table_base"></p>
+  <details><summary>All columns, baselines included</summary><div class="panel" id="policy_table_details"></div></details>
 </section>
 
 <section id="opponents">
@@ -112,6 +115,8 @@
   <div class="head"><h2>Live</h2>
     <p>The model answers the current situation every 0.12 s, at most 3 requests in flight. Rank: replayed mean damage dealt. Network latency is self-reported and is not a rank key.</p></div>
   <div class="panel" id="live_table"></div>
+  <p class="baselines" id="live_table_base"></p>
+  <details><summary>All columns, baselines included</summary><div class="panel" id="live_table_details"></div></details>
 </section>
 
 <section id="pending_box" hidden>
@@ -131,7 +136,7 @@
     <div class="card"><ul>
       <li>Replay re-runs the game from the submitted answers and checks the outcome. It does not re-call the model, so the model name, cost, and latency are attested by the submitter.</li>
       <li>Survival is the mean round length in seconds. Top moves is the share of decisions per move.</li>
-      <li>Smoke rows (one fight, one round) are grey and sit below official rows.</li>
+      <li>Only AI models are ranked. <code>script</code> and <code>random</code> are baselines: they show under each board and in its details. Smoke rows (one fight, one round) are in <a href="board.json">board.json</a> only.</li>
       <li>This page renders <a href="board.json">board.json</a>. A GitHub Action rebuilds it from <code>results/verified/</code> on every merge to <code>main</code>.</li>
     </ul></div>
   </div>
@@ -158,32 +163,48 @@ const num = (v, d = 1) => v == null ? na : Number(v).toFixed(d);
 const usd = u => !u ? na : u.usd === 0 ? "free" : "$" + Number(u.usd).toFixed(4);
 const tok = u => !u ? na : u.input_tokens === 0 ? "0" : Number(u.input_tokens + (u.output_tokens || 0)).toLocaleString();
 const isFloor = r => r.model_version === "harness";
+const models = rows => rows.filter(r => r.official && !isFloor(r));
+const baselines = rows => rows.filter(r => r.official && isFloor(r));
+const floorOf = rows => baselines(rows).find(r => r.model === "script")?.mean_dealt;
 
+// Leaderboard: AI models only. f is the script floor of the same track.
 const COLS = [
-  ["#", (r, i) => r.official ? `<span class="rank">${i + 1}</span>` : ""],
-  ["Model", r => `${esc(r.model)}${r.official ? "" : '<span class="tag">smoke</span>'}${isFloor(r) ? '<span class="tag">floor</span>' : ""}<small>${esc(r.model_version)}</small>`, "l model"],
+  ["#", (r, i) => `<span class="rank">${i + 1}</span>`],
+  ["Model", r => `${esc(r.model)}<small>${esc(r.model_version)}</small>`, "l model"],
   ["Mean dealt ± 95%", r => `<div class="bar"><i style="width:${Math.max(2, r.mean_dealt / 120 * 100)}px"></i>${num(r.mean_dealt)}<em>${r.ci95 == null ? "" : "± " + num(r.ci95)}</em></div>`, "l"],
+  ["vs script", (r, i, f) => f == null ? na : (r.mean_dealt >= f ? "+" : "") + num(r.mean_dealt - f)],
   ["Wins", r => `${r.wins}/${r.rounds}`],
+  ["$ / ladder", r => usd(r.usage)],
+  ["Call p50 ms", r => r.usage?.latency_ms_p50 ?? na],
+];
+const LIVE_COLS = COLS.filter(([h]) => h !== "Call p50 ms").concat([
+  ["p50 ms", r => r.p50_ms_self_reported ?? na], ["p95 ms", r => r.p95_ms_self_reported ?? na]]);
+// Details: every official row, baselines included.
+const DETAIL_COLS = [
+  ["Model", r => `${esc(r.model)}${isFloor(r) ? '<span class="tag">baseline</span>' : ""}<small>${esc(r.model_version)}</small>`, "l model"],
+  ["Mean dealt", r => num(r.mean_dealt)],
   ["Taken", r => num(r.mean_taken)],
   ["Survival s", r => num(r.mean_seconds)],
-  ["$ / ladder", r => usd(r.usage)],
   ["Tokens", r => tok(r.usage)],
-  ["Call p50 ms", r => r.usage?.latency_ms_p50 ?? na],
   ["Top moves", r => (r.top_moves || []).map(([m, p]) => `${esc(m)} ${p}%`).join("<br>"), "l wrap"],
   ["Errors", r => r.errors],
   ["Coverage", r => esc(r.coverage)],
 ];
-const LIVE_COLS = COLS.filter(([h]) => h !== "Call p50 ms").concat([
-  ["p50 ms", r => r.p50_ms_self_reported ?? na], ["p95 ms", r => r.p95_ms_self_reported ?? na]]);
 
-function table(rows, cols) {
-  if (!rows.length) return '<p class="empty">No replayed results yet.</p>';
+function table(rows, cols, f, empty) {
+  if (!rows.length) return `<p class="empty">${empty}</p>`;
   const head = cols.map(([h, , c]) => `<th class="${c && c.includes("l") ? "l" : ""}">${h}</th>`).join("");
-  const body = rows.map((r, i) => {
-    const cls = [r.official ? "" : "smoke", isFloor(r) ? "floor" : ""].join(" ");
-    return `<tr class="${cls}">${cols.map(([, f, c]) => `<td class="${c || ""}">${f(r, i)}</td>`).join("")}</tr>`;
-  }).join("");
+  const body = rows.map((r, i) =>
+    `<tr class="${isFloor(r) ? "floor" : ""}">${cols.map(([, fn, c]) => `<td class="${c || ""}">${fn(r, i, f)}</td>`).join("")}</tr>`).join("");
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function track(id, rows, cols) {
+  const base = baselines(rows), f = floorOf(rows);
+  document.getElementById(id).innerHTML = table(models(rows), cols, f, "No AI model replayed yet.");
+  document.getElementById(id + "_base").innerHTML = base.length
+    ? "Baselines (no AI model, $0): " + base.map(r => `${esc(r.model)} ${num(r.mean_dealt)} ± ${num(r.ci95)}`).join(" · ") : "";
+  document.getElementById(id + "_details").innerHTML = table(rows.filter(r => r.official), DETAIL_COLS, f, "No replayed results yet.");
 }
 
 function heat(rows, fights) {
@@ -197,17 +218,13 @@ function heat(rows, fights) {
 }
 
 function tiles(b) {
-  const all = b.policy_table.concat(b.live), off = all.filter(r => r.official);
-  const top = off.slice().sort((a, c) => c.mean_dealt - a.mean_dealt)[0];
-  const models = off.filter(r => !isFloor(r));
-  const bestModel = models.slice().sort((a, c) => c.mean_dealt - a.mean_dealt)[0];
-  const floor = Math.max(0, ...off.filter(r => r.model === "script").map(r => r.mean_dealt));
+  const ms = models(b.policy_table.concat(b.live)).sort((a, c) => c.mean_dealt - a.mean_dealt);
+  const best = ms[0], floor = floorOf(b.policy_table);
+  const d = best && floor != null ? best.mean_dealt - floor : null;
   const t = [
-    ["key", top ? top.model : "none", "Leader", top && isFloor(top) ? "the rules bot still leads" : ""],
-    ["", bestModel ? num(bestModel.mean_dealt) : "n/a", "Best model, mean dealt", bestModel ? esc(bestModel.model) : ""],
-    ["", `${models.filter(r => r.mean_dealt > floor).length}/${models.length}`, "Models above the floor", `floor = script ${num(floor)}`],
-    ["", off.reduce((s, r) => s + r.wins, 0), "Wins", "all official rounds"],
-    ["", off.reduce((s, r) => s + r.rounds, 0).toLocaleString(), "Rounds replayed", "official rows"],
+    ["", ms.length, ms.length === 1 ? "AI model tested" : "AI models tested", "official rows, both tracks"],
+    ["key", best ? best.model : "none", "Best model", best ? `${num(best.mean_dealt)} dealt, ${d == null ? "" : `${num(Math.abs(d))} ${d >= 0 ? "above" : "below"} the script floor`}` : ""],
+    ["", best?.usage?.usd != null ? "$" + Number(best.usage.usd).toFixed(4) : "n/a", "Cost per ladder", best ? `${esc(best.model)}, 15 fights` : ""],
   ];
   return t.map(([c, v, l, s]) => `<div class="tile ${c}"><b>${esc(v)}</b><span>${l}</span><small>${s}</small></div>`).join("");
 }
@@ -216,9 +233,9 @@ fetch("board.json").then(r => r.json()).then(b => {
   document.getElementById("edition").textContent = b.edition;
   document.getElementById("hash").textContent = b.prompt_sha256;
   document.getElementById("tiles").innerHTML = tiles(b);
-  document.getElementById("policy_table").innerHTML = table(b.policy_table, COLS);
+  track("policy_table", b.policy_table, COLS);
   document.getElementById("heat").innerHTML = heat(b.policy_table, b.fights);
-  document.getElementById("live_table").innerHTML = table(b.live, LIVE_COLS);
+  track("live_table", b.live, LIVE_COLS);
   if ((b.pending || []).length) {
     document.getElementById("pending_box").hidden = false;
     document.getElementById("pending").innerHTML = "<ul>" + b.pending.map(p => `<li><code>${esc(p)}</code></li>`).join("") + "</ul>";
