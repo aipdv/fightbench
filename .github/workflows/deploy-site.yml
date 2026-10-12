@@ -1,13 +1,14 @@
 name: Deploy board
 
-# Publishes site/ to the Cloudflare Pages project "fightbench" (https://fightbench.aipdv.com).
-# Merges to main go to production. Pull requests from this repo get a preview URL.
+# Builds site/board.json from results/verified/ and publishes site/ to the Cloudflare Pages project "fightbench"
+# (https://fightbench.aipdv.com). Merges to main go to production. Pull requests from this repo get a preview URL.
+# Nobody edits board.json by hand: commit a replayed result and this workflow does the rest.
 on:
   push:
     branches: [main]
-    paths: [site/**, .github/workflows/deploy-site.yml]
+    paths: [site/**, results/verified/**, submissions/**, fightbench.py, .github/workflows/deploy-site.yml]
   pull_request:
-    paths: [site/**, .github/workflows/deploy-site.yml]
+    paths: [site/**, results/verified/**, submissions/**, fightbench.py, .github/workflows/deploy-site.yml]
   workflow_dispatch:
 
 permissions:
@@ -24,6 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # No ROM needed: the board reads replayed rounds and submissions only.
+      - run: python3 fightbench.py board
+      - run: cp recording/veryhard-win-shang-tsung-2.webp site/replay.webp
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

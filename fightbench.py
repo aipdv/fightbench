@@ -9,6 +9,8 @@
   uv run fightbench.py live --policy my.py:MyPolicy     # play in real time, write a live submission
   uv run fightbench.py replay submissions/<file>.json   # maintainer: score a submission, refresh site/board.json
   uv run fightbench.py replay script                    # the floor row on the full ladder (150 rounds)
+  uv run fightbench.py replay pending                   # maintainer: replay every submission without a verified result
+  python3 fightbench.py board                           # rebuild site/board.json from results/verified (no ROM)
 
 There is no prompt flag and no temperature flag: the edition file fixes both.
 """
@@ -22,7 +24,7 @@ import random
 import re
 import statistics
 import time
-from collections import deque
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -42,9 +44,12 @@ VERIFIED, SUBMISSIONS, BOARD = HERE / "results" / "verified", HERE / "submission
 
 class Policy:
     """A model adapter. Return {situation_id: {move_id: probability}} for every situation asked.
-    The policy table asks all 8 situations once per fight. Live asks only the current one."""
+    The policy table asks all 8 situations once per fight. Live asks only the current one.
+    A paid model sets usage = {"input_tokens": n, "output_tokens": n, "usd": x} and adds to it per call.
+    The board shows it as self-reported cost."""
     name: str = "unnamed"
     version: str = ""
+    usage: dict | None = None
 
     def distributions(self, fight_id: str, state_line: str, situations: dict, moves: dict) -> dict:
         raise NotImplementedError
@@ -68,7 +73,12 @@ class ClefFlash(Policy):
             return self.cache[key]
         if not self.clef:
             raise LookupError(f"{fight_id}: not in ab/clef-cache.json. The table command does not call Workers AI.")
-        return {k: a["probabilities"] for k, a in self.clef.ask(body)["answers"].items()}
+        r = self.clef.ask(body)
+        tokens = r.get("usage", {}).get("input_tokens", 0)
+        u = self.usage = self.usage or {"input_tokens": 0, "output_tokens": 0, "usd": 0.0}
+        u["input_tokens"] += tokens
+        u["usd"] += tokens * core.NEURONS_PER_M_INPUT[self.name] / 1e6 * core.USD_PER_1K_NEURONS / 1000
+        return {k: a["probabilities"] for k, a in r["answers"].items()}
 
 
 def load_policy(spec, live=False):
@@ -332,10 +342,26 @@ def submission(policy, track, smoke, **fields):
     print(f"Wrote {path.relative_to(HERE)}. Commit only this file on a branch and open a pull request.")
 
 
+def ms_stats(lat):
+    return {"latency_ms_p50": round(statistics.median(lat)) if lat else None,
+            "latency_ms_p95": round(statistics.quantiles(lat, n=20)[18]) if len(lat) > 1 else None}
+
+
+def run_table(policy, fights):
+    """Ask once per fight and time each call. Usage is None unless the policy reports it (a cache hit costs nothing)."""
+    tables, lat = {}, []
+    for f in fights:
+        t = time.perf_counter()
+        tables[f] = policy.distributions(f, state_line(f), SITUATIONS, MOVES)
+        lat.append(1000 * (time.perf_counter() - t))
+    usage = policy.usage and {"calls": len(fights)} | policy.usage | {"usd": round(policy.usage["usd"], 6)} | ms_stats(lat)
+    return tables, usage
+
+
 def cmd_table(policy, smoke):
-    tables = {f: policy.distributions(f, state_line(f), SITUATIONS, MOVES) for f in LADDER[: 1 if smoke else None]}
+    tables, usage = run_table(policy, LADDER[: 1 if smoke else None])
     check_tables(tables)
-    submission(policy, "policy_table", smoke, tables=tables)
+    submission(policy, "policy_table", smoke, tables=tables, **({"usage": usage} if usage else {}))
 
 
 def cmd_live(policy, smoke):
@@ -350,6 +376,17 @@ def cmd_live(policy, smoke):
             print(f"{fight} repeat {repeat}: dealt {r['damage_dealt']} taken {r['damage_taken']} "
                   f"at {r['fps']} fps (self-reported, replay rescores it)")
     submission(policy, "live", smoke, interval_s=LIVE["interval_s"], max_inflight=LIVE["max_inflight"], rounds=rounds)
+
+
+def pending():
+    """Submissions that have no results/verified file yet."""
+    out = []
+    for path in sorted(SUBMISSIONS.glob("*.json")):
+        sub = json.loads(path.read_text())
+        smoke = path.stem.endswith("__smoke")
+        if not (VERIFIED / f"{row_id(sub, smoke)}.jsonl").exists():
+            out.append(path)
+    return out
 
 
 def replay(env, target, smoke=False):
@@ -398,25 +435,43 @@ def replay(env, target, smoke=False):
     write_board()
 
 
+def opponent(state):
+    return re.match(r"LiuKangVs(\w+?)_", state).group(1)
+
+
 def board_row(rid, rows):
+    """One board row from verified rounds. Cost and table-call latency come from the submission (self-reported)."""
     dealt = [r["damage_dealt"] for r in rows]
     n, first = len(rows), rows[0]
+    moves = [d["action"] for r in rows for d in r["decisions"] if d["action"]]
+    by_fight = {}
+    for r in rows:
+        by_fight.setdefault(r.get("fight"), []).append(r["damage_dealt"])
     row = {"id": rid, "model": first["model"], "model_version": first["model_version"], "official": first["official"],
            "status": "replay-verified", "mean_dealt": round(statistics.mean(dealt), 1),
            "ci95": round(1.96 * statistics.stdev(dealt) / n ** 0.5, 1) if n > 1 else None,
            "wins": sum(r["won"] for r in rows), "rounds": n,
            "mean_taken": round(statistics.mean(r["damage_taken"] for r in rows), 1),
+           "mean_seconds": round(statistics.mean(r.get("seconds", 0) for r in rows), 1),
            "errors": sum("error" in d for r in rows for d in r["decisions"]),
-           "coverage": f"{n}/{len(LADDER) * ED['repeats']}"}
+           "coverage": f"{n}/{len(LADDER) * ED['repeats']}",
+           "per_fight": [round(statistics.mean(by_fight[f]), 1) if f in by_fight else None for f in LADDER],
+           "top_moves": [[m, round(100 * c / len(moves))] for m, c in Counter(moves).most_common(3)]}
+    sub_path = SUBMISSIONS / f"{rid}.json"
+    if first["model_version"] == "harness":
+        row["usage"] = {"usd": 0, "input_tokens": 0}  # code-only floor rows call no model
+    elif sub_path.exists():
+        row["usage"] = json.loads(sub_path.read_text()).get("usage")
     if first["track"] == "live":
         lat = [d["latency_ms"] for r in rows for d in r["decisions"] if not d["dropped"] and d["latency_ms"] is not None]
-        row |= {"p50_ms_self_reported": round(statistics.median(lat)) if lat else None,
-                "p95_ms_self_reported": round(statistics.quantiles(lat, n=20)[18]) if len(lat) > 1 else None}
+        stats = ms_stats(lat)
+        row |= {"p50_ms_self_reported": stats["latency_ms_p50"], "p95_ms_self_reported": stats["latency_ms_p95"]}
     return row
 
 
 def write_board():
-    board = {"edition": EDITION, "prompt_sha256": PROMPT_SHA256, "policy_table": [], "live": []}
+    board = {"edition": EDITION, "prompt_sha256": PROMPT_SHA256, "fights": [opponent(f) for f in LADDER],
+             "policy_table": [], "live": [], "pending": [p.stem for p in pending()]}
     for path in sorted(VERIFIED.glob("*.jsonl")):
         rows = [json.loads(line) for line in path.read_text().splitlines()]
         board[rows[0]["track"]].append(board_row(path.stem, rows))
@@ -435,7 +490,8 @@ def main():
         s = sub.add_parser(name, help=f"run a model, write submissions/<model>--<version>__{track}__{EDITION}.json")
         s.add_argument("--policy", required=True, help="'clef' or path/to/file.py:ClassName (a Policy)")
         s.add_argument("--smoke", action="store_true", help="fight 0, repeat 0 only")
-    s = sub.add_parser("replay", help="score a submission file, or 'script' / 'random'")
+    sub.add_parser("board", help="rebuild site/board.json from results/verified. No ROM needed.")
+    s = sub.add_parser("replay", help="score a submission file, 'script' / 'random', or 'pending'")
     s.add_argument("target")
     s.add_argument("--smoke", action="store_true", help="script / random only: fight 0, repeat 0")
     args = p.parse_args()
@@ -443,6 +499,8 @@ def main():
         return cmd_table(load_policy(args.policy), args.smoke)
     if args.cmd == "live":
         return cmd_live(load_policy(args.policy, live=True), args.smoke)
+    if args.cmd == "board":
+        return write_board()
     env = open_env()
     if env is None:
         if args.cmd == "smoke":
@@ -452,7 +510,8 @@ def main():
         for target in ("script", "random", "script", "random"):  # the second pass must match the first
             replay(env, target, smoke=True)
         return print("Smoke OK: both replays matched.")
-    replay(env, args.target, args.smoke)
+    for target in pending() if args.target == "pending" else [args.target]:
+        replay(env, str(target), args.smoke)
 
 
 if __name__ == "__main__":

@@ -21,9 +21,21 @@ uv run fightbench.py table --policy my.py:MyPolicy         # write submissions/<
 uv run fightbench.py live --policy my.py:MyPolicy          # write submissions/<model>--<version>__live__mk2-liukang-v1.json
 uv run fightbench.py replay submissions/<file>.json        # maintainer: writes results/verified/ and site/board.json
 uv run fightbench.py replay script                         # floor row, full ladder
+uv run fightbench.py replay pending                        # maintainer: replay every submission without a result
+python3 fightbench.py board                                # rebuild site/board.json from results/verified (no ROM)
 ```
 
-`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. Replay checks the game outcome. It does not re-call the model, so the model name is attested by the submitter. The board is `site/index.html`. A GitHub Action publishes it to https://fightbench.aipdv.com on every merge to `main` that changes `site/`.
+`--policy clef` is Clef-flash. `table --policy clef` reads `ab/clef-cache.json` only and never calls Workers AI. Submit by committing only your `submissions/` file in a pull request. A policy that calls a paid model sets `usage` (`input_tokens`, `output_tokens`, `usd`), and `table` adds call count and latency. Replay checks the game outcome. It does not re-call the model, so the model name, cost, and latency are attested by the submitter.
+
+### How the board updates
+
+Nobody edits the site by hand. `results/verified/*.jsonl` is the source of truth.
+
+1. A contributor opens a PR with one `submissions/` file. The board lists it as pending.
+2. The maintainer runs `gh pr checkout <N> && uv run fightbench.py replay pending`, then commits `results/verified/` to the PR. The ROM stays on the maintainer's machine, so CI cannot replay.
+3. Merge. The deploy Action runs `fightbench.py board` and publishes `site/` to https://fightbench.aipdv.com. Each PR from this repo also gets a preview URL.
+
+The board shows mean damage dealt with a 95% interval, wins, damage taken, survival time, $ per ladder, tokens, call latency, top moves, and damage per opponent.
 
 ## How it started: Clef-flash plays MK2
 

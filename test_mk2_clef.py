@@ -312,6 +312,38 @@ with tempfile.TemporaryDirectory() as tmp:
     fb.write_board()
     assert [r["model"] for r in json.loads(fb.BOARD.read_text())["policy_table"]] == ["better", "full", "lucky"]
 
+# run_table times each call and keeps the policy's usage. A policy that reports none (a cache hit) gets no usage block.
+class Paid(fb.Policy):
+    def distributions(self, fight_id, state_line, situations, moves):
+        self.usage = {"input_tokens": 100, "output_tokens": 0, "usd": 0.0001234567}
+        return {s: {m: 1 / 17 for m in fb.MOVE_IDS} for s in situations}
+_, usage = fb.run_table(Paid(), fb.LADDER[:2])
+assert usage["calls"] == 2 and usage["input_tokens"] == 100 and usage["usd"] == 0.000123, usage
+assert usage["latency_ms_p50"] is not None, usage
+class Free(Paid):
+    def distributions(self, *a):
+        return {s: {m: 1 / 17 for m in fb.MOVE_IDS} for s in a[2]}
+assert fb.run_table(Free(), fb.LADDER[:1])[1] is None
+
+# The board shows per-opponent damage, move mix, floor cost $0, and lists submissions that have no replay yet.
+real_subs = fb.SUBMISSIONS
+with tempfile.TemporaryDirectory() as tmp:
+    fb.VERIFIED, fb.SUBMISSIONS, fb.BOARD = Path(tmp) / "v", Path(tmp) / "s", Path(tmp) / "board.json"
+    fb.VERIFIED.mkdir(), fb.SUBMISSIONS.mkdir()
+    row = {"track": "policy_table", "model": "script", "model_version": "harness", "official": True, "won": False,
+           "damage_taken": 120, "seconds": 9.0, "fight": fb.LADDER[1], "damage_dealt": 40,
+           "decisions": [{"action": "sweep"}, {"action": "sweep"}, {"action": "block"}, {"action": "sweep"}]}
+    (fb.VERIFIED / "script.jsonl").write_text(json.dumps(row) + "\n")
+    sub = {"model": "m", "model_version": "v", "track": "policy_table"}
+    (fb.SUBMISSIONS / f"{fb.row_id(sub, False)}.json").write_text(json.dumps(sub))
+    fb.write_board()
+    board = json.loads(fb.BOARD.read_text())
+    r = board["policy_table"][0]
+    assert r["per_fight"][1] == 40 and r["per_fight"][0] is None and r["top_moves"][0] == ["sweep", 75], r
+    assert r["usage"]["usd"] == 0 and board["fights"][0] == "Baraka", board
+    assert board["pending"] == [fb.row_id(sub, False)], board["pending"]
+fb.SUBMISSIONS = real_subs
+
 # replay(): the same replay twice is accepted; a replay that differs exits and keeps the old file; bad files are rejected.
 import contextlib
 import io
