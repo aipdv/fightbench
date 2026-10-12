@@ -2316,5 +2316,14 @@
     "flying_kick": 0.1226
    }
   }
+ },
+ "usage": {
+  "calls": 15,
+  "input_tokens": 65391,
+  "output_tokens": 0,
+  "usd": 0.005885,
+  "latency_ms_p50": 1529,
+  "latency_ms_p95": 2449,
+  "measured": "2026-10-12, same 15 requests re-sent from India"
  }
 }
