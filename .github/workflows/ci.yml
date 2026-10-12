@@ -18,3 +18,4 @@ jobs:
           python-version: "3.12"
       # No ROM and no network: the checks cover the frozen edition, validation, and replay with a fake emulator.
       - run: python3 test_mk2_clef.py
+      - run: python3 fightbench.py board  # the deploy build: board.json from results/verified, no ROM

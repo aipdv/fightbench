@@ -5,3 +5,5 @@ __pycache__/
 integration/
 .DS_Store
 ab/clef-cache.json
+site/board.json
+site/replay.webp

@@ -4,88 +4,225 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FightBench</title>
+<meta name="description" content="A replay-verified benchmark for AI decision models. Mortal Kombat II, played from game memory.">
 <meta property="og:title" content="FightBench">
 <meta property="og:image" content="https://fightbench.aipdv.com/banner.png">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;600&display=swap">
 <style>
-  body { font: 16px/1.5 system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; color: #111; }
-  h1 { margin: 0; }
-  h1 img { display: block; width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; }
-  .sub { color: #555; margin-top: .25rem; }
-  code { background: #f2f2f2; padding: 0 .25rem; border-radius: 3px; overflow-wrap: anywhere; }
-  table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; font-variant-numeric: tabular-nums; }
-  th, td { text-align: right; padding: .35rem .6rem; border-bottom: 1px solid #ddd; }
-  th:first-child, td:first-child { text-align: left; }
-  th { font-size: .85rem; color: #555; }
-  tr.official td:first-child { font-weight: 600; }
-  tr.floor td { background: #f6f6f6; }
-  tr.smoke td { color: #777; font-style: italic; }
-  .tag { font-size: .75rem; border: 1px solid #aaa; border-radius: 3px; padding: 0 .3rem; margin-left: .3rem; font-style: normal; }
-  .empty { color: #777; }
+  :root { --bg: #170f22; --surface: #22172f; --raise: #2c1f3c; --ink: #f4ead8; --soft: #b9a9c9; --muted: #7f6f90;
+          --line: #3d2d50; --edge: #05030a; --fire: #ff9d1e; --yellow: #ffd21e; --red: #ef3e36; --green: #5fd38a;
+          --pixel: 'Press Start 2P', monospace; --mono: 'IBM Plex Mono', ui-monospace, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, sans-serif; }
+  a { color: var(--yellow); }
+  main { max-width: 1180px; margin: auto; padding: 18px 24px 80px; }
+  .banner { display: block; width: 100%; height: auto; image-rendering: pixelated; border: 3px solid var(--edge); border-radius: 10px; box-shadow: 6px 6px 0 var(--edge); }
+  nav { position: sticky; top: 0; z-index: 9; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 24px; padding: 10px; margin: 18px -24px 0;
+        background: rgba(23, 15, 34, .94); backdrop-filter: blur(8px); font: 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+  nav a { color: var(--soft); text-decoration: none; border-bottom: 2px solid transparent; }
+  nav a:hover { color: var(--ink); border-bottom-color: var(--fire); }
+  section[id] { scroll-margin-top: 50px; }
+  .hero { text-align: center; margin: 22px auto 26px; max-width: 760px; }
+  .hero p { margin: 0; font-size: 19px; }
+  .meta { font: 12px var(--mono); color: var(--muted); margin-top: 10px; overflow-wrap: anywhere; }
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 40px; }
+  .tile { background: var(--surface); border: 2px solid var(--edge); border-radius: 10px; padding: 14px 16px; box-shadow: 4px 4px 0 var(--edge); min-width: 0; }
+  .tile.key { background: var(--fire); color: var(--edge); }
+  .tile b { display: block; font: 17px/1.4 var(--pixel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile span { display: block; font: 11px var(--mono); letter-spacing: .04em; text-transform: uppercase; margin-top: 6px; opacity: .8; }
+  .tile small { display: block; font: 11px var(--mono); margin-top: 4px; opacity: .75; }
+  .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin: 44px 0 14px; }
+  h2 { font: 18px/1.4 var(--pixel); margin: 0; color: var(--yellow); text-shadow: 3px 3px 0 var(--edge); }
+  .head p { margin: 0; color: var(--soft); font-size: 15px; max-width: 640px; }
+  .panel { background: var(--surface); border: 2px solid var(--edge); border-radius: 10px; box-shadow: 5px 5px 0 var(--edge); padding: 6px 4px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 8px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 400; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.l, th.l { text-align: left; }
+  td.wrap { white-space: normal; min-width: 150px; font-size: 11px; line-height: 1.35; color: var(--soft); }
+  td.model { font-weight: 600; font-size: 14px; }
+  td.model small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  tr.floor td { color: var(--soft); }
+  tr.smoke td { color: var(--muted); font-style: italic; }
+  .rank { font: 12px var(--pixel); color: var(--fire); }
+  .tag { font: 10px var(--mono); border: 1px solid var(--muted); border-radius: 3px; padding: 0 4px; margin-left: 6px; font-style: normal; font-weight: 400; color: var(--soft); }
+  .bar { display: flex; align-items: center; gap: 8px; min-width: 170px; }
+  .bar i { display: block; height: 12px; background: var(--fire); border: 1px solid var(--edge); border-radius: 2px; }
+  .bar em { font-style: normal; color: var(--muted); font-size: 11px; }
+  .heat td { text-align: center; padding: 8px 6px; color: var(--edge); font-weight: 600; }
+  .heat td.model { text-align: left; color: var(--ink); }
+  .heat th { text-align: center; }
+  .clip { display: grid; grid-template-columns: 3fr 2fr; gap: 22px; align-items: center; }
+  .clip img { width: 100%; height: auto; border: 3px solid var(--edge); border-radius: 10px; box-shadow: 5px 5px 0 var(--edge); image-rendering: pixelated; background: var(--raise); }
+  .clip p { margin: 0 0 10px; }
+  .card { background: var(--surface); border: 2px solid var(--edge); border-radius: 10px; box-shadow: 5px 5px 0 var(--edge); padding: 6px 22px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .card li { margin: 6px 0; }
+  code { font-family: var(--mono); font-size: 13px; background: var(--raise); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+  pre { font: 13px/1.6 var(--mono); background: var(--edge); padding: 12px 14px; border-radius: 6px; overflow-x: auto; }
+  .empty { color: var(--muted); padding: 10px 14px; margin: 0; font: 13px var(--mono); }
+  footer { margin-top: 50px; text-align: center; font: 12px var(--mono); color: var(--muted); }
+  @media (max-width: 860px) { .tiles { grid-template-columns: repeat(2, 1fr); } .clip, .cols { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
-<h1><img src="banner.png" alt="FightBench" width="1680" height="720"></h1>
-<p class="sub">First game: Mortal Kombat II (Genesis), Liu Kang vs the CPU. Models read game memory, not pixels.</p>
-<p>Edition <code id="edition">mk2-liukang-v1</code>. Prompt hash (SHA-256 of the edition file): <code id="hash">loading</code></p>
+<main>
+<h1 style="margin:0"><img class="banner" src="banner.png" alt="FightBench" width="1680" height="720"></h1>
+<nav>
+  <a href="#board">Board</a><a href="#opponents">Opponents</a><a href="#replay">Replay</a><a href="#live">Live</a>
+  <a href="#method">Method</a><a href="#submit">Submit</a><a href="board.json">Data</a>
+  <a href="https://github.com/aipdv/fightbench">GitHub</a>
+</nav>
 
-<h2>Policy Table</h2>
-<p>The model answers 8 situation questions once per fight, before play. Rank: mean damage dealt on the 15-fight VeryHard ladder, 10 repeats. Latency: n/a.</p>
-<div id="policy_table"></div>
+<section class="hero">
+  <p>A replay-verified benchmark for <b>AI decision models</b>. First game: Mortal Kombat II (Genesis). Liu Kang fights 15 VeryHard CPU opponents. Models read game memory, not pixels.</p>
+  <div class="meta">Edition <span id="edition">mk2-liukang-v1</span> · prompt SHA-256 <span id="hash">loading</span></div>
+</section>
 
-<h2>Live</h2>
-<p>The model answers the current situation every 0.12 s, at most 3 requests in flight. Rank: replayed mean damage dealt. Latency is <strong>self-reported</strong> and is not a rank key.</p>
-<div id="live"></div>
+<div class="tiles" id="tiles"></div>
 
-<h2>Method</h2>
-<ul>
-  <li>Same save states, same 17 moves, same prompt, same seeds for every row.</li>
-  <li>Rank is mean damage dealt, high to low. Wins are reported. Wins are not the sort key.</li>
-  <li><code>script</code> is the rules-bot floor row. <code>random</code> picks uniformly from the 17 moves.</li>
-  <li>A different model version or track is a different row. A different prompt or temperature is a new edition.</li>
-  <li>Replay checks the game outcome. It does not re-call the model. The model name is attested by the submitter.</li>
-  <li>Smoke rows (one fight, one round) are shown in grey, below the official rows. One fight is not the ladder.</li>
-</ul>
+<section id="board">
+  <div class="head"><h2>Policy Table</h2>
+    <p>The model answers 8 situation questions once per fight, before play. Rank: mean damage dealt (of 120) over 15 fights x 10 repeats. Cost and call latency are self-reported.</p></div>
+  <div class="panel" id="policy_table"></div>
+</section>
 
-<h2>Submit</h2>
-<ol>
-  <li>Install your own ROM: <code>uv run mk2_clef.py --rom &lt;your file&gt;</code>. Nobody ships a ROM.</li>
-  <li>Write a <code>Policy</code> class (see <code>fightbench.py</code>).</li>
-  <li>Policy Table: <code>uv run fightbench.py table --policy my.py:MyPolicy</code>. Live: <code>uv run fightbench.py live --policy my.py:MyPolicy</code>.</li>
-  <li>Commit only the file in <code>submissions/</code> on a branch and open a pull request.</li>
-  <li>The maintainer runs <code>uv run fightbench.py replay submissions/&lt;file&gt;.json</code>. Only replayed results reach this board.</li>
-</ol>
-<p>Code: <a href="https://github.com/aipdv/fightbench">github.com/aipdv/fightbench</a></p>
+<section id="opponents">
+  <div class="head"><h2>By opponent</h2>
+    <p>Mean damage dealt to each CPU opponent, official rows only. Brighter is more damage.</p></div>
+  <div class="panel" id="heat"></div>
+</section>
+
+<section id="replay">
+  <div class="head"><h2>Replay</h2><p>Every number above comes from a replay like this one.</p></div>
+  <div class="clip">
+    <img src="replay.webp" alt="Clef-flash beats the VeryHard Shang Tsung with 12 health left" loading="lazy">
+    <div>
+      <p><b>Clef-flash beats the VeryHard Shang Tsung</b> with 12 health left. Pre-edition demo, replayed frame for frame from the sim.</p>
+      <p>Clef answered 8 situation questions in one call before the round. Code reads game memory each frame and plays a move from Clef's probabilities.</p>
+      <p>Wins are rare. That is why the rank is damage dealt, not wins.</p>
+    </div>
+  </div>
+</section>
+
+<section id="live">
+  <div class="head"><h2>Live</h2>
+    <p>The model answers the current situation every 0.12 s, at most 3 requests in flight. Rank: replayed mean damage dealt. Network latency is self-reported and is not a rank key.</p></div>
+  <div class="panel" id="live_table"></div>
+</section>
+
+<section id="pending_box" hidden>
+  <div class="head"><h2>Pending</h2><p>Submitted, not replayed yet. These rows have no score until the maintainer replays them.</p></div>
+  <div class="panel" id="pending"></div>
+</section>
+
+<section id="method">
+  <div class="head"><h2>Method</h2></div>
+  <div class="cols">
+    <div class="card"><ul>
+      <li>Same save states, same 17 moves, same prompt, same seeds for every row.</li>
+      <li>Rank is mean damage dealt, high to low. Wins are reported, not ranked.</li>
+      <li><code>script</code> is the rules-bot floor. <code>random</code> picks uniformly from the 17 moves. Both call no model, so they cost $0.</li>
+      <li>A new model version or track is a new row. A new prompt or temperature is a new edition.</li>
+    </ul></div>
+    <div class="card"><ul>
+      <li>Replay re-runs the game from the submitted answers and checks the outcome. It does not re-call the model, so the model name, cost, and latency are attested by the submitter.</li>
+      <li>Survival is the mean round length in seconds. Top moves is the share of decisions per move.</li>
+      <li>Smoke rows (one fight, one round) are grey and sit below official rows.</li>
+      <li>This page renders <a href="board.json">board.json</a>. A GitHub Action rebuilds it from <code>results/verified/</code> on every merge to <code>main</code>.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="submit">
+  <div class="head"><h2>Submit</h2><p>Bring your own ROM. Nobody ships a ROM.</p></div>
+  <div class="card">
+<pre>uv run mk2_clef.py --rom &lt;your file&gt;                     # install your ROM
+uv run fightbench.py table --policy my.py:MyPolicy        # or: live --policy my.py:MyPolicy
+git add submissions/ &amp;&amp; git commit &amp;&amp; gh pr create        # commit only your submissions/ file</pre>
+    <p>Write a <code>Policy</code> class (see <code>fightbench.py</code>). Set <code>usage</code> to report tokens and $; the harness times each call. The maintainer runs <code>uv run fightbench.py replay pending</code> on the PR and merges. The board updates itself.</p>
+  </div>
+</section>
+
+<footer>FightBench · <a href="board.json">raw data</a> · <a href="https://github.com/aipdv/fightbench">github.com/aipdv/fightbench</a> · MIT</footer>
+</main>
 
 <script>
-const COLS = [
-  ["Model", r => r.model],
-  ["Mean dealt", r => r.mean_dealt.toFixed(1) + (r.ci95 == null ? "" : " ± " + r.ci95.toFixed(1))],
-  ["Wins", r => r.wins], ["Rounds", r => r.rounds], ["Mean taken", r => r.mean_taken.toFixed(1)],
-  ["Errors", r => r.errors], ["Coverage", r => r.coverage], ["Status", r => r.status],
-];
-const LIVE_COLS = [["p50 ms (self-reported)", r => r.p50_ms_self_reported ?? "n/a"],
-                   ["p95 ms (self-reported)", r => r.p95_ms_self_reported ?? "n/a"]];
-const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+// Model names and usage come from submissions: escape every value.
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const na = '<span style="color:var(--muted)">n/a</span>';
+const num = (v, d = 1) => v == null ? na : Number(v).toFixed(d);
+const usd = u => !u ? na : u.usd === 0 ? "free" : "$" + Number(u.usd).toFixed(4);
+const tok = u => !u ? na : u.input_tokens === 0 ? "0" : Number(u.input_tokens + (u.output_tokens || 0)).toLocaleString();
+const isFloor = r => r.model_version === "harness";
 
-function render(id, rows, cols) {
-  const el = document.getElementById(id);
-  if (!rows.length) { el.innerHTML = '<p class="empty">No replayed results yet.</p>'; return; }
-  const head = cols.map(([h]) => `<th>${h}</th>`).join("");
-  const body = rows.map(r => {
-    const cls = [r.official ? "official" : "smoke", r.model === "script" ? "floor" : ""].join(" ");
-    // Model names come from submissions: escape every value, then add the smoke tag.
-    const cells = cols.map(([, f], i) => `<td>${i === 0 ? esc(r.model) + (r.official ? "" : '<span class="tag">smoke</span>') : esc(f(r))}</td>`);
-    return `<tr class="${cls}">${cells.join("")}</tr>`;
+const COLS = [
+  ["#", (r, i) => r.official ? `<span class="rank">${i + 1}</span>` : ""],
+  ["Model", r => `${esc(r.model)}${r.official ? "" : '<span class="tag">smoke</span>'}${isFloor(r) ? '<span class="tag">floor</span>' : ""}<small>${esc(r.model_version)}</small>`, "l model"],
+  ["Mean dealt ± 95%", r => `<div class="bar"><i style="width:${Math.max(2, r.mean_dealt / 120 * 100)}px"></i>${num(r.mean_dealt)}<em>${r.ci95 == null ? "" : "± " + num(r.ci95)}</em></div>`, "l"],
+  ["Wins", r => `${r.wins}/${r.rounds}`],
+  ["Taken", r => num(r.mean_taken)],
+  ["Survival s", r => num(r.mean_seconds)],
+  ["$ / ladder", r => usd(r.usage)],
+  ["Tokens", r => tok(r.usage)],
+  ["Call p50 ms", r => r.usage?.latency_ms_p50 ?? na],
+  ["Top moves", r => (r.top_moves || []).map(([m, p]) => `${esc(m)} ${p}%`).join("<br>"), "l wrap"],
+  ["Errors", r => r.errors],
+  ["Coverage", r => esc(r.coverage)],
+];
+const LIVE_COLS = COLS.filter(([h]) => h !== "Call p50 ms").concat([
+  ["p50 ms", r => r.p50_ms_self_reported ?? na], ["p95 ms", r => r.p95_ms_self_reported ?? na]]);
+
+function table(rows, cols) {
+  if (!rows.length) return '<p class="empty">No replayed results yet.</p>';
+  const head = cols.map(([h, , c]) => `<th class="${c && c.includes("l") ? "l" : ""}">${h}</th>`).join("");
+  const body = rows.map((r, i) => {
+    const cls = [r.official ? "" : "smoke", isFloor(r) ? "floor" : ""].join(" ");
+    return `<tr class="${cls}">${cols.map(([, f, c]) => `<td class="${c || ""}">${f(r, i)}</td>`).join("")}</tr>`;
   }).join("");
-  el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function heat(rows, fights) {
+  rows = rows.filter(r => r.official);
+  if (!rows.length) return '<p class="empty">No official rows yet.</p>';
+  const head = `<th class="l">Model</th>` + fights.map(f => `<th>${esc(f)}</th>`).join("");
+  const cell = v => v == null ? `<td>${na}</td>`
+    : `<td style="background:rgba(255,157,30,${Math.min(1, 0.08 + v / 60).toFixed(2)});${v < 25 ? "color:var(--ink)" : ""}">${Math.round(v)}</td>`;
+  const body = rows.map(r => `<tr><td class="model">${esc(r.model)}</td>${r.per_fight.map(cell).join("")}</tr>`).join("");
+  return `<table class="heat"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function tiles(b) {
+  const all = b.policy_table.concat(b.live), off = all.filter(r => r.official);
+  const top = off.slice().sort((a, c) => c.mean_dealt - a.mean_dealt)[0];
+  const models = off.filter(r => !isFloor(r));
+  const bestModel = models.slice().sort((a, c) => c.mean_dealt - a.mean_dealt)[0];
+  const floor = Math.max(0, ...off.filter(r => r.model === "script").map(r => r.mean_dealt));
+  const t = [
+    ["key", top ? top.model : "none", "Leader", top && isFloor(top) ? "the rules bot still leads" : ""],
+    ["", bestModel ? num(bestModel.mean_dealt) : "n/a", "Best model, mean dealt", bestModel ? esc(bestModel.model) : ""],
+    ["", `${models.filter(r => r.mean_dealt > floor).length}/${models.length}`, "Models above the floor", `floor = script ${num(floor)}`],
+    ["", off.reduce((s, r) => s + r.wins, 0), "Wins", "all official rounds"],
+    ["", off.reduce((s, r) => s + r.rounds, 0).toLocaleString(), "Rounds replayed", "official rows"],
+  ];
+  return t.map(([c, v, l, s]) => `<div class="tile ${c}"><b>${esc(v)}</b><span>${l}</span><small>${s}</small></div>`).join("");
 }
 
 fetch("board.json").then(r => r.json()).then(b => {
   document.getElementById("edition").textContent = b.edition;
   document.getElementById("hash").textContent = b.prompt_sha256;
-  render("policy_table", b.policy_table, COLS);
-  render("live", b.live, COLS.concat(LIVE_COLS));
+  document.getElementById("tiles").innerHTML = tiles(b);
+  document.getElementById("policy_table").innerHTML = table(b.policy_table, COLS);
+  document.getElementById("heat").innerHTML = heat(b.policy_table, b.fights);
+  document.getElementById("live_table").innerHTML = table(b.live, LIVE_COLS);
+  if ((b.pending || []).length) {
+    document.getElementById("pending_box").hidden = false;
+    document.getElementById("pending").innerHTML = "<ul>" + b.pending.map(p => `<li><code>${esc(p)}</code></li>`).join("") + "</ul>";
+  }
 });
 </script>
 </body>
