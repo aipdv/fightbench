@@ -30,7 +30,7 @@ jobs:
           python-version: "3.12"
       # No ROM needed: the board reads replayed rounds and submissions only.
       - run: python3 fightbench.py board
-      - run: cp recording/veryhard-win-shang-tsung-2.webp site/replay.webp
+      - run: cp recording/telnyx-decision-pro-vs-scorpion.webp site/replay.webp
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
