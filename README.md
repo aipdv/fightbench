@@ -55,7 +55,7 @@ Real or luck? (Pre-edition demo, not a FightBench score.) 200 more rounds agains
 
 Wins are rare (about 1 in 200), and on this one fight with the `clef4` prompt Clef out-damaged the rules bot. The frozen FightBench ladder is the fair test: see the board. The face in the corner is MK2's "Toasty!" Easter egg.
 
-Other recordings: `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
+Other recordings: `recording/telnyx-decision-pro-vs-scorpion.mp4` (an edition replay, the board clip), `recording/demo.mp4` (2 min), `recording/highlights.jpg`, `recording/calibration-moves.png`.
 
 ## How it works
 
